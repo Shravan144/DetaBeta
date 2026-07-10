@@ -1,0 +1,21 @@
+passenger_id,name,age,sex,ticket_class,fare,siblings_aboard,survived,cabin,embarked,country
+1001,Allen Miss Elisabeth,29,female,1,211.34,0,1,B5,Southampton,United Kingdom
+1002,Braund Mr Owen,22,male,3,7.25,1,0,,Southampton,United Kingdom
+1003,Cumings Mrs John,38,female,1,71.28,1,1,C85,Cherbourg,France
+1004,Heikkinen Miss Laina,26,female,3,7.92,0,1,,Southampton,Finland
+1005,Futrelle Mrs Jacques,35,female,1,53.10,1,1,C123,Southampton,United Kingdom
+1006,Allen Mr William,35,male,3,8.05,0,0,,Southampton,United Kingdom
+1007,McCarthy Mr Timothy,54,male,1,51.86,0,0,E46,Southampton,Ireland
+1008,Palsson Master Gosta,2,male,3,21.07,3,0,,Southampton,Sweden
+1009,Johnson Mrs Oscar,27,female,3,11.13,0,1,,Southampton,Sweden
+1010,Nasser Mrs Nicholas,14,female,2,30.07,1,1,,Cherbourg,Lebanon
+1011,Sandstrom Miss Marguerite,4,female,3,16.70,1,1,G6,Southampton,Sweden
+1012,Bonnell Miss Elizabeth,58,female,1,26.55,0,1,C103,Southampton,United Kingdom
+1013,Saundercock Mr William,20,male,3,8.05,0,0,,Southampton,United Kingdom
+1014,Andersson Mr Anders,39,male,3,31.27,1,0,,Southampton,Sweden
+1015,Vestrom Miss Hulda,14,female,3,7.85,0,0,,Southampton,Sweden
+1016,Hewlett Mrs Mary,55,female,2,16.00,0,1,,Southampton,United Kingdom
+1017,Rice Master Eugene,2,male,3,29.12,4,0,,Queenstown,Ireland
+1018,Williams Mr Charles,23,male,2,13.00,0,1,,Southampton,United Kingdom
+1019,Vander Mrs Julius,31,female,3,18.00,1,0,,Southampton,Belgium
+1020,Masselmani Mrs Fatima,22,female,3,7.22,0,1,,Cherbourg,Lebanon
