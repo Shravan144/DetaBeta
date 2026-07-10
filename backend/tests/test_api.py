@@ -1,7 +1,11 @@
 """
 End-to-end API tests using FastAPI's TestClient.
 
-These exercise the real HTTP stack -- routing, dependencies, DB, file storage,
+    NOTE ON PATHS: the backend defines routes WITHOUT the "/api" prefix (Vercel
+    adds/strips it in the deployed multi-service setup). These tests call the
+    backend app directly, so they use the un-prefixed paths (e.g. "/projects").
+
+    These exercise the real HTTP stack -- routing, dependencies, DB, file storage,
 and the engines behind them -- but against an ISOLATED, temporary database and
 storage folder so they never touch your real dev data.
 
@@ -56,7 +60,7 @@ def client(tmp_path, monkeypatch):
 
 
 def _make_project(client: TestClient) -> int:
-    resp = client.post("/api/projects", json={"name": "Titanic study"})
+    resp = client.post("projects", json={"name": "Titanic study"})
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
@@ -64,7 +68,7 @@ def _make_project(client: TestClient) -> int:
 def _upload_sample(client: TestClient, project_id: int) -> int:
     with open(_SAMPLE_CSV, "rb") as fh:
         resp = client.post(
-            f"/api/projects/{project_id}/datasets",
+            f"projects/{project_id}/datasets",
             files={"file": ("passengers.csv", fh, "text/csv")},
         )
     assert resp.status_code == 201, resp.text
@@ -84,18 +88,18 @@ def test_root_health(client):
 def test_project_crud(client):
     pid = _make_project(client)
     # list
-    listing = client.get("/api/projects").json()
+    listing = client.get("projects").json()
     assert any(p["id"] == pid for p in listing)
     # get
-    assert client.get(f"/api/projects/{pid}").json()["name"] == "Titanic study"
+    assert client.get(f"projects/{pid}").json()["name"] == "Titanic study"
     # delete
-    assert client.delete(f"/api/projects/{pid}").status_code == 200
+    assert client.delete(f"projects/{pid}").status_code == 200
     # gone
-    assert client.get(f"/api/projects/{pid}").status_code == 404
+    assert client.get(f"projects/{pid}").status_code == 404
 
 
 def test_missing_project_404(client):
-    assert client.get("/api/projects/99999").status_code == 404
+    assert client.get("projects/99999").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -106,11 +110,11 @@ def test_upload_and_preview(client):
     pid = _make_project(client)
     did = _upload_sample(client, pid)
 
-    meta = client.get(f"/api/datasets/{did}").json()
+    meta = client.get(f"datasets/{did}").json()
     assert meta["n_rows"] == 20
     assert meta["n_columns"] == 11
 
-    preview = client.get(f"/api/datasets/{did}/preview").json()
+    preview = client.get(f"datasets/{did}/preview").json()
     assert preview["n_columns"] == 11
     assert len(preview["rows"]) == 10  # first 10 rows
     assert "survived" in preview["columns"]
@@ -119,7 +123,7 @@ def test_upload_and_preview(client):
 def test_reject_non_csv(client):
     pid = _make_project(client)
     resp = client.post(
-        f"/api/projects/{pid}/datasets",
+        f"projects/{pid}/datasets",
         files={"file": ("bad.csv", b"", "text/csv")},
     )
     assert resp.status_code == 400
@@ -133,7 +137,7 @@ def test_analysis_no_target_engines(client):
     pid = _make_project(client)
     did = _upload_sample(client, pid)
     for engine in ["understand", "health", "investigate", "statistics", "feature-lab"]:
-        resp = client.get(f"/api/datasets/{did}/analysis/{engine}")
+        resp = client.get(f"datasets/{did}/analysis/{engine}")
         assert resp.status_code == 200, f"{engine}: {resp.text}"
         assert isinstance(resp.json(), dict)
 
@@ -142,7 +146,7 @@ def test_analysis_target_engines(client):
     pid = _make_project(client)
     did = _upload_sample(client, pid)
     for engine in ["recommend", "experiment", "explain"]:
-        resp = client.get(f"/api/datasets/{did}/analysis/{engine}?target=survived")
+        resp = client.get(f"datasets/{did}/analysis/{engine}?target=survived")
         assert resp.status_code == 200, f"{engine}: {resp.text}"
         assert isinstance(resp.json(), dict)
 
@@ -150,9 +154,9 @@ def test_analysis_target_engines(client):
 def test_report_with_and_without_target(client):
     pid = _make_project(client)
     did = _upload_sample(client, pid)
-    assert client.get(f"/api/datasets/{did}/analysis/report").status_code == 200
+    assert client.get(f"datasets/{did}/analysis/report").status_code == 200
     assert (
-        client.get(f"/api/datasets/{did}/analysis/report?target=survived").status_code == 200
+        client.get(f"datasets/{did}/analysis/report?target=survived").status_code == 200
     )
 
 
@@ -160,16 +164,16 @@ def test_required_target_missing_returns_400(client):
     pid = _make_project(client)
     did = _upload_sample(client, pid)
     # No target on a modelling engine -> 400.
-    assert client.get(f"/api/datasets/{did}/analysis/experiment").status_code == 400
+    assert client.get(f"datasets/{did}/analysis/experiment").status_code == 400
 
 
 def test_invalid_target_returns_400(client):
     pid = _make_project(client)
     did = _upload_sample(client, pid)
-    resp = client.get(f"/api/datasets/{did}/analysis/recommend?target=nope")
+    resp = client.get(f"datasets/{did}/analysis/recommend?target=nope")
     assert resp.status_code == 400
     assert "not in the dataset" in resp.json()["detail"]
 
 
 def test_analysis_on_missing_dataset_404(client):
-    assert client.get("/api/datasets/99999/analysis/understand").status_code == 404
+    assert client.get("datasets/99999/analysis/understand").status_code == 404

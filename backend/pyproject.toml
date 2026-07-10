@@ -1,0 +1,13 @@
+[project]
+name = "detabeta-backend"
+version = "0.1.0"
+description = "DetaBeta FastAPI backend: 9 data-science engines exposed over HTTP."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi[standard]>=0.115",
+    "sqlalchemy>=2.0",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scipy>=1.13",
+    "scikit-learn>=1.4",
+]

@@ -19,6 +19,9 @@ from db import Dataset, Project, get_db
 from services import storage
 from services.serialization import to_jsonable
 
+# NOTE: routes here are defined WITHOUT the "/api" prefix. Vercel strips "/api"
+# before forwarding to this backend service (see vercel.json routePrefix), so
+# the browser calls "/api/datasets/1" and the backend sees "/datasets/1".
 router = APIRouter(tags=["datasets"])
 
 # How many rows to include in a preview.
@@ -26,7 +29,7 @@ _PREVIEW_ROWS = 10
 
 
 @router.post(
-    "/api/projects/{project_id}/datasets",
+    "/projects/{project_id}/datasets",
     response_model=DatasetOut,
     status_code=status.HTTP_201_CREATED,
 )
@@ -67,7 +70,7 @@ async def upload_dataset(
     return DatasetOut.model_validate(dataset)
 
 
-@router.get("/api/projects/{project_id}/datasets", response_model=list[DatasetOut])
+@router.get("/projects/{project_id}/datasets", response_model=list[DatasetOut])
 def list_datasets(
     project: Project = Depends(get_project_or_404), db: Session = Depends(get_db)
 ) -> list[DatasetOut]:
@@ -80,13 +83,13 @@ def list_datasets(
     return [DatasetOut.model_validate(d) for d in rows]
 
 
-@router.get("/api/datasets/{dataset_id}", response_model=DatasetOut)
+@router.get("/datasets/{dataset_id}", response_model=DatasetOut)
 def get_dataset(dataset: Dataset = Depends(get_dataset_or_404)) -> DatasetOut:
     """Fetch a single dataset's metadata."""
     return DatasetOut.model_validate(dataset)
 
 
-@router.get("/api/datasets/{dataset_id}/preview", response_model=DatasetPreview)
+@router.get("/datasets/{dataset_id}/preview", response_model=DatasetPreview)
 def preview_dataset(dataset: Dataset = Depends(get_dataset_or_404)) -> DatasetPreview:
     """Return the column names and first few rows for a UI table preview."""
     try:
@@ -110,7 +113,7 @@ def preview_dataset(dataset: Dataset = Depends(get_dataset_or_404)) -> DatasetPr
     )
 
 
-@router.delete("/api/datasets/{dataset_id}", response_model=Message)
+@router.delete("/datasets/{dataset_id}", response_model=Message)
 def delete_dataset(
     dataset: Dataset = Depends(get_dataset_or_404), db: Session = Depends(get_db)
 ) -> Message:

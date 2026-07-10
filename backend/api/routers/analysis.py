@@ -27,7 +27,8 @@ from services import analysis
 from services.analysis import TargetError
 
 # All analysis endpoints hang off a single dataset.
-router = APIRouter(prefix="/api/datasets/{dataset_id}/analysis", tags=["analysis"])
+# No "/api" prefix: Vercel strips it before forwarding (see vercel.json).
+router = APIRouter(prefix="/datasets/{dataset_id}/analysis", tags=["analysis"])
 
 # A reusable optional-target query parameter.
 _TargetQuery = Query(

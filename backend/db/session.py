@@ -17,6 +17,7 @@ the models, services, or routes.
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -26,10 +27,12 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 # ---------------------------------------------------------------------------
 # Where is the database?
 # ---------------------------------------------------------------------------
-# Default: a file called `detabeta.db` inside the backend/ folder. This is
-# overridable via the DATABASE_URL env var so we can swap in PostgreSQL later.
-_BACKEND_DIR = Path(__file__).resolve().parent.parent
-_DEFAULT_SQLITE_PATH = _BACKEND_DIR / "detabeta.db"
+# Default: a file called `detabeta.db` in the system temp dir. We use /tmp
+# because that is the one reliably-writable location both under Vercel's
+# `vercel dev` services runtime and in serverless deployments (the project
+# directory itself may be read-only there). It is overridable via the
+# DATABASE_URL env var so we can swap in a persistent PostgreSQL later.
+_DEFAULT_SQLITE_PATH = Path(tempfile.gettempdir()) / "detabeta.db"
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{_DEFAULT_SQLITE_PATH}")
 
 # ---------------------------------------------------------------------------

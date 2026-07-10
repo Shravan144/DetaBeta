@@ -16,7 +16,11 @@ from api.schemas import Message, ProjectCreate, ProjectOut
 from db import Project, get_db
 from services import storage
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+# NOTE: no "/api" prefix here. In the deployed multi-service setup, Vercel
+# routes "/api/*" to this backend and STRIPS the "/api" prefix before
+# forwarding, so the backend must define routes without it. The browser still
+# calls "/api/projects"; the backend sees "/projects".
+router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 def _to_out(project: Project) -> ProjectOut:

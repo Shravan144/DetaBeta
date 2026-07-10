@@ -15,13 +15,16 @@ or Vercel Blob later means changing only this one file.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 import pandas as pd
 
-# Root folder for all stored files. Overridable for tests via env var.
-_BACKEND_DIR = Path(__file__).resolve().parent.parent
-STORAGE_ROOT = Path(os.environ.get("STORAGE_ROOT", _BACKEND_DIR / "storage"))
+# Root folder for all stored files. Defaults to a folder in the system temp dir
+# (/tmp) because that is reliably writable under Vercel's services runtime and
+# in serverless deployments. Overridable via the STORAGE_ROOT env var (and for
+# tests, which point it at a throwaway folder).
+STORAGE_ROOT = Path(os.environ.get("STORAGE_ROOT", Path(tempfile.gettempdir()) / "detabeta_storage"))
 
 
 def _project_dir(project_id: int) -> Path:
