@@ -5,12 +5,12 @@
 pandas>=2.2
 numpy>=1.26
 scipy>=1.13          # Engine 4 (Statistics): t-test, ANOVA, chi-square, correlation p-values
+scikit-learn>=1.4    # Engine 7 (Experiment Studio): pipelines, cross-validation, models
 
 # --- Testing ---
 pytest>=8.0
 
 # NOTE: We will add these as we reach the engines/screens that need them:
-# scikit-learn     -> Engine 6/7 (ML Recommendation + Experiment Studio)
 # shap             -> Engine 8 (Explainability)
 # fastapi, uvicorn -> when we expose the engines over HTTP
 # sqlalchemy       -> when we add the database layer
