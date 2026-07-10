@@ -1,0 +1,16 @@
+# DetaBeta backend dependencies
+# Pinned loosely for a learning project; we can lock these later.
+
+# --- Data science core (used by the engines) ---
+pandas>=2.2
+numpy>=1.26
+
+# --- Testing ---
+pytest>=8.0
+
+# NOTE: We will add these as we reach the engines/screens that need them:
+# scipy            -> Engine 4 (Statistics)
+# scikit-learn     -> Engine 6/7 (ML Recommendation + Experiment Studio)
+# shap             -> Engine 8 (Explainability)
+# fastapi, uvicorn -> when we expose the engines over HTTP
+# sqlalchemy       -> when we add the database layer
