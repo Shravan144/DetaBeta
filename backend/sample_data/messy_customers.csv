@@ -1,0 +1,22 @@
+customer_id,age,income,country,subscribed,signup_source
+1001,25,42000,USA,yes,web
+1002,31,,usa,no,web
+1003,,58000, USA ,no,mobile
+1004,45,61000,India,no,web
+1005,29,47000,India,no,mobile
+1006,52,,UK,no,web
+1007,38,53000,uk,no,web
+1008,41,999999,USA,no,mobile
+1009,33,49000,India,no,web
+1010,,51000,India,no,web
+1011,27,45000,USA,no,mobile
+1012,60,62000,UK,no,web
+1013,48,,India,no,web
+1014,35,50000,India,no,mobile
+1015,44,50000,USA,yes,web
+1016,39,,uk,no,web
+1017,50,64000,India,no,web
+1018,28,46000,India,no,mobile
+1019,55,60000,USA,no,web
+1020,42,,India,no,web
+1020,42,,India,no,web

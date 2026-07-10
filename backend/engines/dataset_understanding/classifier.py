@@ -225,6 +225,10 @@ def _numeric_stats(non_null: pd.Series) -> dict:
         "std": round(float(non_null.std()), 4) if len(non_null) > 1 else 0.0,
         "q25": round(float(desc.get("25%", non_null.quantile(0.25))), 4),
         "q75": round(float(desc.get("75%", non_null.quantile(0.75))), 4),
+        # Skew measures asymmetry: ~0 is symmetric, >0 has a long right tail,
+        # <0 a long left tail. Engine 2 uses it to choose mean vs median for
+        # imputation (the mean is unreliable when a column is skewed).
+        "skew": round(float(non_null.skew()), 4) if len(non_null) > 2 else 0.0,
     }
 
 
