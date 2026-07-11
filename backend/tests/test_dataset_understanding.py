@@ -11,6 +11,7 @@ Run them from the backend/ folder with:
 
 from __future__ import annotations
 
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
@@ -93,7 +94,8 @@ def test_every_decision_has_reasoning():
 
 @pytest.fixture
 def sample_profile():
-    df = pd.read_csv("sample_data/passengers.csv")
+    csv_path = Path(__file__).resolve().parent.parent / "sample_data" / "passengers.csv"
+    df = pd.read_csv(csv_path)
     return understand_dataset(df)
 
 

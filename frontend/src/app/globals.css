@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+:root {
+  --background: #09090b;
+  --foreground: #f4f4f5;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #09090b;
+  --popover-foreground: #f4f4f5;
+  --primary: #10b981;
+  --primary-foreground: #052e16;
+  --secondary: #27272a;
+  --secondary-foreground: #f4f4f5;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #10b981;
+  --accent-foreground: #fafafa;
+  --destructive: #ef4444;
+  --destructive-foreground: #fafafa;
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #10b981;
+  
+  --panel: #0f0f11;
+  --accent-light: rgba(16, 185, 129, 0.15);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  overflow-x: hidden;
+}
+
+/* Custom Scrollbar for scientific look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #09090b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Scrollbar styling for Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #27272a #09090b;
+}
+
+.ambient-glow {
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.03) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Custom table hover and styling */
+.scientific-table th {
+  font-weight: 500;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+}
+
+.scientific-table td {
+  padding: 10px 12px;
+  font-size: 0.8125rem;
+  border-bottom: 1px solid rgba(39, 39, 42, 0.5);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.scientific-table tr:hover td {
+  background-color: rgba(39, 39, 42, 0.2);
+}

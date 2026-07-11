@@ -74,6 +74,15 @@ def run_experiment(
             "cannot learn from rows that have no answer."
         )
 
+    # --- Subsample if too large for responsive interactive modeling --- #
+    max_rows = 2000
+    if len(work) > max_rows:
+        work = work.sample(n=max_rows, random_state=42)
+        report.warnings.append(
+            f"The dataset is large ({len(df)} rows). Subsampled {max_rows} rows to ensure "
+            "interactive modeling is responsive and fast."
+        )
+
     y = work[target]
     profile = understand_dataset(work)
     numeric, categorical = split_feature_types(profile, plan.feature_columns)

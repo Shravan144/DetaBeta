@@ -89,6 +89,15 @@ def explain_model(
         return report
 
     work = df[df[target].notna()].copy()
+    
+    # --- Subsample if too large for responsive interactive explainability --- #
+    max_rows = 2000
+    if len(work) > max_rows:
+        work = work.sample(n=max_rows, random_state=42)
+        report.warnings.append(
+            f"The dataset is large ({len(df)} rows). Subsampled {max_rows} rows for explainability calculations."
+        )
+
     y = work[target]
     profile = understand_dataset(work)
     numeric, categorical = split_feature_types(profile, plan.feature_columns)
