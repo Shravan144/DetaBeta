@@ -444,14 +444,21 @@ export const RightPanel: React.FC = () => {
   // local Explainability SHAP waterfall
   // ----------------------------------------------------
   const renderShapPanel = (shap: any) => {
-    // Generate waterfall contribution charts
+    // Real Shapley values from Engine 8 (approximated by coalition sampling).
     const contributions = shap.contributions || [];
-    
+    // Classification exposes a probability; regression does not. This decides
+    // whether effects are shown as percentage points or raw target units.
+    const isProbability = typeof shap.predicted_probability === "number";
+    const fmtEffect = (effect: number) =>
+      isProbability
+        ? `${effect >= 0 ? "+" : ""}${(effect * 100).toFixed(1)}%`
+        : `${effect >= 0 ? "+" : ""}${effect.toFixed(3)}`;
+
     // Map contributions to chart data
     const chartData = contributions.map((c: any) => ({
       feature: c.feature,
       effect: c.effect,
-      fill: c.effect >= 0 ? "#ef4444" : "#10b981", // red increases churn/risk, green decreases
+      fill: c.effect >= 0 ? "#10b981" : "#ef4444", // green pushes prediction up, red pulls it down
     }));
 
     return (
@@ -481,9 +488,15 @@ export const RightPanel: React.FC = () => {
 
         {/* Feature contribution graph */}
         <div className="space-y-2">
-          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-            Feature Contribution Signals
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+              Feature Contribution Signals
+            </h3>
+            <div className="flex items-center gap-3 text-[9px] text-zinc-500 font-mono">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-emerald-500 inline-block" />pushes up</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-rose-500 inline-block" />pulls down</span>
+            </div>
+          </div>
           <div className="h-56 bg-zinc-950/60 rounded border border-zinc-900 p-2">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
@@ -520,11 +533,11 @@ export const RightPanel: React.FC = () => {
                     <div className="text-[10px] text-zinc-500 font-mono">value: {String(c.value)}</div>
                   </div>
                   <span className={`font-mono font-semibold px-2 py-0.5 rounded text-[10px] ${
-                    isIncrease 
-                      ? "bg-rose-950/40 text-rose-400 border border-rose-900/20" 
-                      : "bg-emerald-950/40 text-emerald-400 border border-emerald-900/20"
+                    isIncrease
+                      ? "bg-emerald-950/40 text-emerald-400 border border-emerald-900/20"
+                      : "bg-rose-950/40 text-rose-400 border border-rose-900/20"
                   }`}>
-                    {isIncrease ? "+" : ""}{(c.effect * 100).toFixed(1)}%
+                    {fmtEffect(c.effect)}
                   </span>
                 </div>
               );

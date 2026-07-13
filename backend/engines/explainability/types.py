@@ -68,6 +68,34 @@ class PredictionExplanation:
     baseline_prediction: float | None = None      # the "average" starting point
     contributions: list[FeatureContribution] = field(default_factory=list)
     summary: str = ""
+    # How the local contributions were computed ("shapley" or "occlusion").
+    method: str = "shapley"
+
+
+@dataclass
+class ConfusionMatrix:
+    """The model's cross-validated confusion matrix (classification only).
+
+    `matrix[i][j]` counts rows whose TRUE class is `labels[i]` and whose
+    PREDICTED class is `labels[j]`. For binary problems we also expose the
+    familiar true/false positive/negative counts for a chosen positive class.
+    """
+
+    labels: list = field(default_factory=list)       # class labels, in matrix order
+    matrix: list = field(default_factory=list)        # list[list[int]], true x pred
+    accuracy: float = 0.0
+    n_samples: int = 0
+
+    # Binary-only conveniences (None for multiclass).
+    is_binary: bool = False
+    positive_label: object = None
+    negative_label: object = None
+    true_negative: int | None = None
+    false_positive: int | None = None
+    false_negative: int | None = None
+    true_positive: int | None = None
+
+    note: str = ""
 
 
 @dataclass
@@ -82,6 +110,9 @@ class ExplainabilityReport:
 
     global_importances: list[FeatureImportance] = field(default_factory=list)
     examples: list[PredictionExplanation] = field(default_factory=list)
+
+    # Cross-validated confusion matrix (classification only; None otherwise).
+    confusion: "ConfusionMatrix | None" = None
 
     warnings: list[str] = field(default_factory=list)
     summary: str = ""

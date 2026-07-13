@@ -1,9 +1,9 @@
 """
 The explainability techniques for Engine 8.
 
-We deliberately use two transparent, model-agnostic methods instead of a heavy
-black-box dependency like SHAP. They teach the same core ideas and their logic
-is easy to read:
+We implement transparent, model-agnostic techniques from scratch rather than
+pulling in a heavy black-box dependency. The logic stays readable and teaches
+the actual math:
 
   GLOBAL -- permutation importance
     Train the model, measure its score. Then, one feature at a time, randomly
@@ -12,15 +12,22 @@ is easy to read:
     (to this model) useless. We repeat the shuffle several times and average,
     because a single shuffle is noisy.
 
-  LOCAL -- occlusion / what-if
-    For one specific row, get the model's prediction. Then, one feature at a
-    time, replace that row's value with the dataset's "typical" value (median
-    for numbers, mode for categories) and predict again. The change in the
-    prediction is how much that feature's actual value mattered FOR THIS ROW.
+  LOCAL -- Shapley values (the method SHAP is built on)
+    For one specific row, fairly attribute the gap between the model's
+    prediction and its average (baseline) prediction across the features. We
+    approximate the exact (exponential-cost) Shapley values with Monte-Carlo
+    coalition sampling: reveal the row's real feature values one at a time in
+    random orders, starting from a random reference row, and credit each feature
+    with the prediction jump it causes. See `shapley_contributions` for details.
+    The contributions sum to (prediction - baseline), SHAP's efficiency property.
 
-Both work on the ORIGINAL columns (we perturb the raw dataframe and let the
-model's own preprocessing pipeline transform it), so explanations are stated in
-human terms, never in one-hot-encoded feature names.
+  LOCAL (legacy) -- occlusion / what-if
+    A simpler single-pass alternative kept for reference: replace each value
+    with the dataset's typical value and see how far the prediction moves.
+
+All techniques work on the ORIGINAL columns (we perturb the raw dataframe and
+let the model's own preprocessing pipeline transform it), so explanations are
+stated in human terms, never in one-hot-encoded feature names.
 """
 
 from __future__ import annotations
@@ -86,15 +93,110 @@ def _prediction_scalar(estimator, row_df: pd.DataFrame, positive_class) -> float
     - Classification without probabilities: 1.0/0.0 for the predicted class.
     - Regression: the predicted value itself.
     """
+    return float(_prediction_scalar_batch(estimator, row_df, positive_class)[0])
+
+
+def _prediction_scalar_batch(estimator, X: pd.DataFrame, positive_class) -> np.ndarray:
+    """
+    Vectorized version of `_prediction_scalar`: one comparable number per row.
+
+    Doing this in a single call (instead of row-by-row) is what makes the
+    Shapley sampling below fast enough to be interactive.
+    """
     if hasattr(estimator, "predict_proba") and positive_class is not None:
-        proba = estimator.predict_proba(row_df)[0]
+        proba = estimator.predict_proba(X)
         classes = list(estimator.classes_)
         idx = classes.index(positive_class)
-        return float(proba[idx])
-    pred = estimator.predict(row_df)[0]
+        return proba[:, idx].astype(float)
+    preds = estimator.predict(X)
     if positive_class is not None:
-        return 1.0 if pred == positive_class else 0.0
-    return float(pred)
+        return (np.asarray(preds) == positive_class).astype(float)
+    return np.asarray(preds, dtype=float)
+
+
+def shapley_contributions(
+    estimator,
+    X: pd.DataFrame,
+    row_index: int,
+    background: pd.DataFrame,
+    columns: list[str],
+    positive_class=None,
+    n_samples: int = 40,
+    random_state: int = 42,
+) -> tuple[float, float, dict[str, tuple[object, float]]]:
+    """
+    Explain ONE row with SHAP-style Shapley values, computed from scratch.
+
+    THE IDEA (the math SHAP is built on)
+    ------------------------------------
+    A prediction is a "game" and the features are "players" cooperating to move
+    the prediction away from a baseline. A feature's Shapley value is its FAIR
+    share of that movement, averaged over every possible order in which features
+    could join the coalition.
+
+    Trying every order is 2^n work, so we APPROXIMATE with Monte-Carlo sampling
+    (the classic Strumbelj-Kononenko method):
+
+      repeat n_samples times:
+        * pick a random reference row from the background data
+        * pick a random order of the features
+        * start from the reference prediction, then reveal the instance's real
+          features one at a time in that order; each feature's marginal push on
+          the prediction is credited to it
+      average each feature's credited push over all samples.
+
+    This satisfies SHAP's key *efficiency* property: the contributions sum to
+    (prediction - baseline), so the waterfall actually adds up.
+
+    `X` supplies the instance row (via `row_index`) and its column dtypes;
+    `background` is the reference pool the contributions are measured against.
+
+    Returns (actual_prediction, baseline_prediction, contributions) where
+    contributions maps column -> (actual_value, shapley_value), matching the
+    shape the occlusion method returned so the rest of the engine is unchanged.
+    """
+    rng = np.random.default_rng(random_state)
+    cols = list(columns)
+
+    x_row = X.loc[row_index]
+    row_df = X.loc[[row_index]]
+    actual_pred = _prediction_scalar(estimator, row_df, positive_class)
+
+    n_bg = len(background)
+    phi = {c: 0.0 for c in cols}
+    # We accumulate the prediction of each sampled reference. Because every
+    # permutation telescopes exactly to (prediction - reference_prediction),
+    # defining the baseline as the mean of THESE references makes the
+    # efficiency property hold exactly: baseline + sum(phi) == prediction.
+    ref_pred_sum = 0.0
+
+    for _ in range(n_samples):
+        # A random reference instance to "start" the coalition from.
+        ref_pos = int(rng.integers(n_bg))
+        ref = background.iloc[[ref_pos]]
+
+        perm = list(rng.permutation(cols))
+
+        # Build k+1 rows: row j has the first j features (in this order) set to
+        # the instance's real values, the rest still at the reference's values.
+        coalition = pd.concat([ref] * (len(perm) + 1), ignore_index=True)
+        for i, col in enumerate(perm):
+            # Cumulative: from step i+1 onward, feature `col` is "revealed".
+            coalition.loc[i + 1 :, col] = x_row[col]
+
+        preds = _prediction_scalar_batch(estimator, coalition, positive_class)
+        ref_pred_sum += float(preds[0])  # coalition[0] is the pure reference
+        # The jump when each feature is revealed is that feature's marginal push.
+        for i, col in enumerate(perm):
+            phi[col] += float(preds[i + 1] - preds[i])
+
+    baseline_pred = ref_pred_sum / n_samples if n_samples else actual_pred
+
+    contributions: dict[str, tuple[object, float]] = {}
+    for col in cols:
+        contributions[col] = (x_row[col], phi[col] / n_samples)
+
+    return actual_pred, baseline_pred, contributions
 
 
 def occlusion_contributions(
