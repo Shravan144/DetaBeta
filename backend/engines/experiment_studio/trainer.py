@@ -128,12 +128,23 @@ def make_cv(problem_type: str, n_folds: int, stratify: bool, y: pd.Series):
 
 
 def scorers_for(problem_type: str, metric_names: list[str]) -> dict[str, str]:
-    """Translate our metric names into scikit-learn scoring strings."""
+    """Translate our metric names into scikit-learn scoring strings.
+
+    Multiclass needs special handling: scikit-learn's plain ``roc_auc`` scorer
+    only supports binary targets and raises "multi_class must be in ('ovo',
+    'ovr')" otherwise. For 3+ classes we swap in the one-vs-rest weighted
+    variant so ROC-AUC works instead of crashing every model.
+    """
     is_classification = "classification" in problem_type
+    is_multiclass = "multiclass" in problem_type
     table = _CLASSIFICATION_SCORERS if is_classification else _REGRESSION_SCORERS
     out: dict[str, str] = {}
     for name in metric_names:
-        if name in table:
+        if name not in table:
+            continue
+        if is_multiclass and name == "roc_auc":
+            out[name] = "roc_auc_ovr_weighted"
+        else:
             out[name] = table[name]
     return out
 

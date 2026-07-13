@@ -1,14 +1,15 @@
 """Database package: SQLAlchemy engine, session, and ORM models.
 
 Public surface:
-    Base, engine, SessionLocal, get_db  -- from session.py
-    Project, Dataset                    -- from models.py
-    init_db()                           -- create all tables if missing
+    Base, engine, SessionLocal, get_db          -- from session.py
+    Project, Dataset,
+    AnalysisSession, EngineResult               -- from models.py
+    init_db()                                   -- create all tables if missing
 """
 
 from __future__ import annotations
 
-from db.models import Dataset, Project
+from db.models import AnalysisSession, Dataset, EngineResult, Project
 from db.session import Base, SessionLocal, engine, get_db
 
 
@@ -29,5 +30,7 @@ __all__ = [
     "get_db",
     "Project",
     "Dataset",
+    "AnalysisSession",
+    "EngineResult",
     "init_db",
 ]

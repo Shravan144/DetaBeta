@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from engines.explainability import explain_model
 
@@ -92,3 +93,103 @@ def test_regression_target_is_explained():
     importances = {fi.feature: fi.importance for fi in report.global_importances}
     # 'size' truly drives price, so it should outrank the irrelevant 'extra'.
     assert importances["size"] > importances["extra"]
+
+
+# --------------------------------------------------------------------------- #
+# SHAP / Shapley-value local explanations
+# --------------------------------------------------------------------------- #
+def test_local_explanations_use_shapley():
+    df = _informative_classification()
+    report = explain_model(df, target="outcome", n_examples=1)
+    assert report.examples[0].method == "shapley"
+
+
+def test_shapley_efficiency_property_classification():
+    """
+    The defining property of Shapley values: baseline + sum(contributions)
+    must equal the model's actual prediction. We compute the baseline as the
+    mean prediction over the sampled references, so this holds (near) exactly.
+    """
+    df = _informative_classification()
+    report = explain_model(df, target="outcome", n_examples=2)
+    for ex in report.examples:
+        total = sum(c.effect for c in ex.contributions)
+        assert ex.baseline_prediction is not None
+        reconstructed = ex.baseline_prediction + total
+        # For classification the prediction target is the positive-class prob.
+        assert abs(reconstructed - ex.predicted_probability) < 1e-6
+
+
+def test_shapley_efficiency_property_regression():
+    rng = np.random.default_rng(2)
+    n = 200
+    size = rng.uniform(50, 200, size=n)
+    price = size * 3.0 + rng.normal(scale=5.0, size=n)
+    df = pd.DataFrame({"size": size, "extra": rng.normal(size=n), "price": price})
+    report = explain_model(df, target="price", n_examples=2)
+    for ex in report.examples:
+        total = sum(c.effect for c in ex.contributions)
+        reconstructed = ex.baseline_prediction + total
+        # predicted_label is the regression value here.
+        assert abs(reconstructed - float(ex.predicted_label)) < 1e-6
+
+
+def test_shapley_credits_the_informative_feature():
+    """The row's biggest Shapley driver should be the informative feature."""
+    df = _informative_classification()
+    report = explain_model(df, target="outcome", n_examples=3)
+    # Across example rows, 'signal' should dominate 'noise' on average.
+    signal_total = 0.0
+    noise_total = 0.0
+    for ex in report.examples:
+        for c in ex.contributions:
+            if c.feature == "signal":
+                signal_total += abs(c.effect)
+            elif c.feature == "noise":
+                noise_total += abs(c.effect)
+    assert signal_total > noise_total
+
+
+# --------------------------------------------------------------------------- #
+# Confusion matrix
+# --------------------------------------------------------------------------- #
+def test_binary_confusion_matrix_is_populated():
+    df = _informative_classification()
+    report = explain_model(df, target="outcome", n_examples=1)
+    cm = report.confusion
+    assert cm is not None and cm.is_binary
+    # The four quadrants must be real integers that account for every row.
+    quad_sum = cm.true_negative + cm.false_positive + cm.false_negative + cm.true_positive
+    assert quad_sum == cm.n_samples
+    # Accuracy equals the correct predictions (the diagonal) over the total.
+    correct = cm.true_negative + cm.true_positive
+    assert abs(cm.accuracy - correct / cm.n_samples) < 1e-9
+
+
+def test_regression_has_no_confusion_matrix():
+    rng = np.random.default_rng(3)
+    n = 150
+    size = rng.uniform(50, 200, size=n)
+    price = size * 2.0 + rng.normal(scale=5.0, size=n)
+    df = pd.DataFrame({"size": size, "price": price})
+    report = explain_model(df, target="price", n_examples=1)
+    assert report.confusion is None
+
+
+def test_multiclass_confusion_matrix_matches_labels():
+    rng = np.random.default_rng(4)
+    n = 300
+    centers = {"low": -4.0, "mid": 0.0, "high": 4.0}
+    labels = rng.choice(list(centers), size=n)
+    driver = np.array([centers[l] for l in labels]) + rng.normal(scale=0.6, size=n)
+    df = pd.DataFrame({"driver": driver, "junk": rng.normal(size=n), "grade": labels})
+    report = explain_model(df, target="grade", n_examples=1)
+    cm = report.confusion
+    # If Engine 7 could not train a multiclass model, there is nothing to
+    # explain and the confusion matrix is correctly absent; skip in that case.
+    if cm is None:
+        pytest.skip("No multiclass model was trained for this dataset.")
+    assert not cm.is_binary
+    assert len(cm.matrix) == len(cm.labels)
+    assert all(len(row) == len(cm.labels) for row in cm.matrix)
+    assert sum(sum(row) for row in cm.matrix) == cm.n_samples

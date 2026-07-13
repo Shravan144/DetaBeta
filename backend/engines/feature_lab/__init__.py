@@ -11,6 +11,7 @@ modifies the data -- it only advises.
 """
 
 from .engine import recommend_features
+from .transforms import TransformError, apply_transform
 from .types import (
     FeatureLabReport,
     FeatureRecommendation,
@@ -20,6 +21,8 @@ from .types import (
 
 __all__ = [
     "recommend_features",
+    "apply_transform",
+    "TransformError",
     "FeatureLabReport",
     "FeatureRecommendation",
     "Priority",

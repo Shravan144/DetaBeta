@@ -71,6 +71,73 @@ class DatasetPreview(BaseModel):
     rows: list[dict]  # first N rows as records
 
 
+class ApplyTransformRequest(BaseModel):
+    """Body for applying one Feature Lab recommendation to create a new version."""
+
+    # A TransformType value, e.g. "log_transform" (validated by the applier).
+    transform: str = Field(min_length=1, examples=["log_transform"])
+    # Column(s) the recommendation targeted.
+    columns: list[str] = Field(min_length=1)
+    # The recommendation's evidence dict (clip bounds, thresholds, ...). Optional.
+    evidence: dict = Field(default_factory=dict)
+    # Optional human label for the change (used in notes/lineage).
+    title: str | None = None
+
+
+class HealthSnapshot(BaseModel):
+    """A tiny before/after health reading so the UI can show the improvement."""
+
+    score: float
+    grade: str
+
+
+class ApplyTransformResult(BaseModel):
+    """Result of applying a transform: the new dataset version + what changed."""
+
+    dataset: DatasetOut               # the newly created dataset version
+    changes: list[str]                # human-readable change notes
+    health_before: HealthSnapshot
+    health_after: HealthSnapshot
+
+
+# ---------------------------------------------------------------------------
+# Analysis sessions & cached engine results
+# ---------------------------------------------------------------------------
+
+class SessionOut(BaseModel):
+    """An analysis session (one run over a dataset for a target), summarized."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    dataset_id: int
+    # None for the target-independent "base" session (understand + health).
+    target: str | None = None
+    created_at: datetime
+    # Which engines already have a cached result in this session.
+    completed_engine_keys: list[str] = Field(default_factory=list)
+
+
+class EngineResultOut(BaseModel):
+    """A single engine's cached result inside a session (with parsed output)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    engine_key: str
+    status: str
+    duration_ms: int | None = None
+    error: str | None = None
+    created_at: datetime
+    # The parsed engine output. Loosely typed like the analysis responses.
+    result: dict = Field(default_factory=dict)
+
+
+class SessionDetailOut(SessionOut):
+    """A session plus the full cached results of every engine that has run."""
+
+    results: list[EngineResultOut] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Shared
 # ---------------------------------------------------------------------------

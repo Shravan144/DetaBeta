@@ -20,7 +20,8 @@ already did that with cross-validation). We say so in a warning.
 from __future__ import annotations
 
 import pandas as pd
-from sklearn.metrics import get_scorer
+from sklearn.metrics import confusion_matrix, get_scorer
+from sklearn.model_selection import cross_val_predict
 from sklearn.pipeline import Pipeline
 
 from engines.dataset_understanding import understand_dataset
@@ -28,11 +29,17 @@ from engines.ml_recommendation import recommend_model
 from engines.ml_recommendation.types import MLRecommendationReport, ProblemType
 from engines.experiment_studio.engine import run_experiment
 from engines.experiment_studio.preprocessing import build_preprocessor, split_feature_types
-from engines.experiment_studio.trainer import build_estimator, needs_scaling, scorers_for
+from engines.experiment_studio.trainer import (
+    build_estimator,
+    make_cv,
+    needs_scaling,
+    scorers_for,
+)
 from engines.experiment_studio.types import ExperimentReport
 
-from .explainers import occlusion_contributions, permutation_importance_by_column
+from .explainers import permutation_importance_by_column, shapley_contributions
 from .types import (
+    ConfusionMatrix,
     ExplainabilityReport,
     FeatureContribution,
     FeatureImportance,
@@ -127,17 +134,91 @@ def explain_model(
     )
     _fill_global_importances(report, raw_imp)
 
-    # --- LOCAL explanations for a few example rows --- #
+    # --- Where does the model make mistakes? (confusion matrix) --- #
+    if is_classification:
+        report.confusion = _confusion_matrix(
+            pipe, X, y, plan.problem_type.value, report
+        )
+
+    # --- LOCAL explanations for a few example rows (Shapley values) --- #
     positive_class = _positive_class(y) if is_classification else None
+    # A background sample is the "reference" distribution Shapley values are
+    # measured against. Cap it so the sampling stays fast.
+    background = X if len(X) <= 100 else X.sample(n=100, random_state=42)
     example_indices = list(X.index[:n_examples])
     for idx in example_indices:
         explanation = _explain_row(
-            pipe, X, idx, feature_cols, is_classification, positive_class
+            pipe, background, X, idx, feature_cols, is_classification, positive_class
         )
         report.examples.append(explanation)
 
     _write_summary(report)
     return report
+
+
+def _confusion_matrix(
+    pipe,
+    X: pd.DataFrame,
+    y: pd.Series,
+    problem_type: str,
+    report: ExplainabilityReport,
+) -> ConfusionMatrix | None:
+    """Cross-validated confusion matrix so 'where it errs' uses real numbers.
+
+    We use out-of-fold predictions (`cross_val_predict`) rather than predictions
+    on the training data, so the mistakes shown are honest generalization errors
+    consistent with Engine 7's scoring.
+    """
+    try:
+        cv, _ = make_cv(problem_type, n_folds=5, stratify=True, y=y)
+        y_pred = cross_val_predict(pipe, X, y, cv=cv)
+    except Exception as exc:  # noqa: BLE001 - explainability must never crash
+        report.warnings.append(f"Could not compute the confusion matrix: {exc}")
+        return None
+
+    labels = sorted(y.unique(), key=lambda v: str(v))
+    is_binary = len(labels) == 2
+
+    # For binary, order labels as [negative, positive] so the 2x2 lines up with
+    # the classic TN/FP/FN/TP layout.
+    positive_label = _positive_class(y) if is_binary else None
+    if is_binary:
+        negative_label = next(l for l in labels if l != positive_label)
+        labels = [negative_label, positive_label]
+
+    matrix = confusion_matrix(y, y_pred, labels=labels)
+    total = int(matrix.sum())
+    correct = int(matrix.trace())
+
+    cm = ConfusionMatrix(
+        labels=[_native(l) for l in labels],
+        matrix=[[int(c) for c in row] for row in matrix],
+        accuracy=(correct / total) if total else 0.0,
+        n_samples=total,
+        is_binary=is_binary,
+    )
+
+    if is_binary:
+        # matrix rows/cols are [negative, positive].
+        cm.true_negative = int(matrix[0][0])
+        cm.false_positive = int(matrix[0][1])
+        cm.false_negative = int(matrix[1][0])
+        cm.true_positive = int(matrix[1][1])
+        cm.positive_label = _native(positive_label)
+        cm.negative_label = _native(labels[0])
+        cm.note = (
+            f"Out-of-fold predictions treating '{cm.positive_label}' as the "
+            "positive class."
+        )
+    else:
+        cm.note = "Out-of-fold predictions across all classes."
+
+    return cm
+
+
+def _native(value):
+    """Convert numpy scalar labels to plain Python for clean JSON."""
+    return getattr(value, "item", lambda: value)()
 
 
 def _pick_scorer(metric: str, is_classification: bool):
@@ -197,15 +278,16 @@ def _fill_global_importances(report: ExplainabilityReport, raw_imp: dict) -> Non
 
 def _explain_row(
     pipe,
+    background: pd.DataFrame,
     X: pd.DataFrame,
     idx: int,
     feature_cols: list[str],
     is_classification: bool,
     positive_class,
 ) -> PredictionExplanation:
-    """Build a local explanation for a single row via occlusion."""
-    actual, baseline, contribs = occlusion_contributions(
-        pipe, X, idx, feature_cols, positive_class=positive_class
+    """Build a local explanation for a single row via Shapley values."""
+    actual, baseline, contribs = shapley_contributions(
+        pipe, X, idx, background, feature_cols, positive_class=positive_class
     )
 
     predicted_label = pipe.predict(X.loc[[idx]])[0]
@@ -218,6 +300,7 @@ def _explain_row(
         predicted_label=predicted_label,
         predicted_probability=probability,
         baseline_prediction=baseline,
+        method="shapley",
     )
 
     contributions: list[FeatureContribution] = []
@@ -234,7 +317,7 @@ def _explain_row(
         else:
             reasoning = (
                 f"'{feature}' = {value!r} {direction} the prediction "
-                f"(by {abs(effect):.4f}) versus a typical value."
+                f"(Shapley value {effect:+.4f}) relative to the average prediction."
             )
         contributions.append(
             FeatureContribution(

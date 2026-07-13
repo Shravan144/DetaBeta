@@ -8,14 +8,25 @@ CSV is unreadable we reject the request before creating any DB row.
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.deps import get_dataset_or_404, get_project_or_404
-from api.schemas import DatasetOut, DatasetPreview, Message
+from api.schemas import (
+    ApplyTransformRequest,
+    ApplyTransformResult,
+    DatasetOut,
+    DatasetPreview,
+    HealthSnapshot,
+    Message,
+)
 from db import Dataset, Project, get_db
+from engines.data_health import assess_health
+from engines.feature_lab import TransformError, apply_transform
 from services import storage
 from services.serialization import to_jsonable
 
@@ -68,6 +79,90 @@ async def upload_dataset(
     db.commit()
     db.refresh(dataset)
     return DatasetOut.model_validate(dataset)
+
+
+def _next_version_name(source_name: str, existing_names: set[str]) -> str:
+    """Pick the next 'name_vN.csv' that isn't already used in the project.
+
+    'passengers.csv' -> 'passengers_v2.csv'; applying again -> '_v3', etc. We
+    strip any existing '_vN' suffix first so versions of versions stay flat and
+    readable instead of nesting ('passengers_v2_v2').
+    """
+    stem = source_name[:-4] if source_name.lower().endswith(".csv") else source_name
+    base = re.sub(r"_v\d+$", "", stem)  # collapse an existing version suffix
+    version = 2
+    while f"{base}_v{version}.csv" in existing_names:
+        version += 1
+    return f"{base}_v{version}.csv"
+
+
+@router.post(
+    "/datasets/{dataset_id}/apply-transform",
+    response_model=ApplyTransformResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def apply_transform_to_dataset(
+    dataset: Dataset = Depends(get_dataset_or_404),
+    body: ApplyTransformRequest = Body(...),
+    db: Session = Depends(get_db),
+) -> ApplyTransformResult:
+    """Apply one Feature Lab recommendation, saving the result as a NEW version.
+
+    Embodies DetaBeta's "recommend, don't force, never overwrite" rule: we read
+    the source dataset, apply exactly one transform to a copy, and persist it as
+    a new Dataset row. The raw evidence is preserved. We also measure the data
+    health score before and after so the UI can show the improvement.
+    """
+    try:
+        source_df = storage.load_dataframe(dataset.storage_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset {dataset.id} has no stored file.",
+        ) from exc
+
+    # Health BEFORE, so we can report the delta the transform produced.
+    before = assess_health(source_df)
+
+    try:
+        new_df, changes = apply_transform(
+            source_df, body.transform, body.columns, body.evidence
+        )
+    except TransformError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    after = assess_health(new_df)
+
+    # Name the new version, avoiding collisions with existing datasets.
+    existing = {
+        n for (n,) in db.execute(
+            select(Dataset.name).where(Dataset.project_id == dataset.project_id)
+        ).all()
+    }
+    new_name = _next_version_name(dataset.name, existing)
+
+    rel_path, n_rows, n_cols = storage.save_dataframe(
+        dataset.project_id, new_name, new_df
+    )
+    new_dataset = Dataset(
+        project_id=dataset.project_id,
+        name=new_name,
+        storage_path=rel_path,
+        n_rows=n_rows,
+        n_columns=n_cols,
+    )
+    db.add(new_dataset)
+    db.commit()
+    db.refresh(new_dataset)
+
+    return ApplyTransformResult(
+        dataset=DatasetOut.model_validate(new_dataset),
+        changes=changes,
+        health_before=HealthSnapshot(score=before.score, grade=before.grade),
+        health_after=HealthSnapshot(score=after.score, grade=after.grade),
+    )
 
 
 @router.get("/projects/{project_id}/datasets", response_model=list[DatasetOut])

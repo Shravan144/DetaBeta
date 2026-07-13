@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import analysis, datasets, projects
+from api.routers import analysis, datasets, projects, sessions
 from db import init_db
 
 
@@ -81,3 +81,5 @@ def root() -> dict:
 app.include_router(projects.router)
 app.include_router(datasets.router)
 app.include_router(analysis.router)
+app.include_router(sessions.router)
+app.include_router(sessions.session_router)

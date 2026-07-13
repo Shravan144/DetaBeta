@@ -12,6 +12,9 @@ import {
   ArrowRight,
   Loader2,
   Sparkles,
+  History,
+  RefreshCw,
+  Zap,
 } from "lucide-react";
 
 export const OverviewView: React.FC = () => {
@@ -23,11 +26,16 @@ export const OverviewView: React.FC = () => {
     runAnalysis,
     setActiveTab,
     openRightPanel,
+    session,
+    sessions,
+    loadSessions,
+    rerunSession,
   } = useWorkspace();
 
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
 
   // Analysis states
   const [profile, setProfile] = useState<any>(null);
@@ -60,10 +68,26 @@ export const OverviewView: React.FC = () => {
       // Run investigate engine
       const investData = await runAnalysis("investigate");
       setDiscoveries(investData?.findings || []);
+
+      // Refresh the analysis-session history for this dataset.
+      await loadSessions();
     } catch (e) {
       console.error("Failed to load overview reports:", e);
     } finally {
       setLoadingAnalysis(false);
+    }
+  };
+
+  const handleRerun = async () => {
+    setRerunning(true);
+    try {
+      // Start a fresh session version, then recompute the overview engines.
+      await rerunSession();
+      await loadOverviewAnalysis();
+    } catch (e) {
+      console.error("Failed to re-run analysis:", e);
+    } finally {
+      setRerunning(false);
     }
   };
 
@@ -320,6 +344,73 @@ export const OverviewView: React.FC = () => {
               ) : (
                 <div className="text-xs text-zinc-500 text-center py-8 bg-zinc-900/30 border border-dashed border-zinc-800 rounded-lg">
                   No discoveries calculated yet.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Session history */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5 text-zinc-500" />
+                Session History
+              </h3>
+              <button
+                onClick={handleRerun}
+                disabled={rerunning}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-semibold bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 border border-zinc-800 text-zinc-300 rounded transition cursor-pointer"
+              >
+                <RefreshCw className={`w-3 h-3 ${rerunning ? "animate-spin" : ""}`} />
+                <span>Re-run analysis</span>
+              </button>
+            </div>
+
+            {session.cached && (
+              <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-mono">
+                <Zap className="w-3 h-3" />
+                <span>Served from cache · instant</span>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {sessions.length > 0 ? (
+                sessions.map((s, idx) => {
+                  const isActive = s.id === session.id;
+                  const created = new Date(s.created_at).toLocaleString();
+                  return (
+                    <div
+                      key={s.id}
+                      className={`p-3 rounded-lg border text-xs transition ${
+                        isActive
+                          ? "bg-emerald-950/20 border-emerald-800/60"
+                          : "bg-zinc-900/40 border-zinc-850"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-semibold text-zinc-200">
+                          {idx === 0 ? "Latest" : `v${sessions.length - idx}`}
+                          {s.target ? ` · target: ${s.target}` : " · base"}
+                        </span>
+                        {isActive && (
+                          <span className="text-[9px] uppercase tracking-wider text-emerald-400 font-bold">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-zinc-500 font-mono mt-1">{created}</div>
+                      {s.completed_engine_keys.length > 0 && (
+                        <div className="text-[10px] text-zinc-500 mt-1.5">
+                          {s.completed_engine_keys.length} engine
+                          {s.completed_engine_keys.length === 1 ? "" : "s"} cached
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-xs text-zinc-500 text-center py-6 bg-zinc-900/30 border border-dashed border-zinc-800 rounded-lg">
+                  No sessions yet.
                 </div>
               )}
             </div>

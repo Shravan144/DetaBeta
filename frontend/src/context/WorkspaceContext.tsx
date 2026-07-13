@@ -44,8 +44,19 @@ export interface ToastState {
 }
 
 export interface SessionState {
-  id: string | null;
+  // The real backend analysis-session id for the most recent run (or null).
+  id: number | null;
   status: "idle" | "running" | "completed" | "failed";
+  // Whether the most recent engine result was served from the cache.
+  cached: boolean;
+}
+
+export interface SessionSummary {
+  id: number;
+  dataset_id: number;
+  target: string | null;
+  created_at: string;
+  completed_engine_keys: string[];
 }
 
 interface WorkspaceContextProps {
@@ -65,6 +76,9 @@ interface WorkspaceContextProps {
   showToast: (message: string, type?: "success" | "error") => void;
   session: SessionState;
   setSession: React.Dispatch<React.SetStateAction<SessionState>>;
+  sessions: SessionSummary[];
+  loadSessions: (target?: string) => Promise<void>;
+  rerunSession: (target?: string) => Promise<void>;
   loadProjects: () => Promise<void>;
   loadDatasets: (projectId: number) => Promise<void>;
   selectProject: (projectId: number | null) => Promise<void>;
@@ -73,7 +87,22 @@ interface WorkspaceContextProps {
   uploadDataset: (file: File) => Promise<Dataset>;
   deleteProject: (projectId: number) => Promise<void>;
   deleteDataset: (datasetId: number) => Promise<void>;
-  runAnalysis: (engineKey: string, target?: string) => Promise<any>;
+  runAnalysis: (
+    engineKey: string,
+    target?: string,
+    opts?: { refresh?: boolean }
+  ) => Promise<any>;
+  applyTransform: (
+    datasetId: number,
+    payload: { transform: string; columns: string[]; evidence?: any; title?: string }
+  ) => Promise<ApplyTransformResult>;
+}
+
+export interface ApplyTransformResult {
+  dataset: Dataset;
+  changes: string[];
+  health_before: { score: number; grade: string };
+  health_after: { score: number; grade: string };
 }
 
 const WorkspaceContext = createContext<WorkspaceContextProps | undefined>(undefined);
@@ -101,7 +130,17 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [session, setSession] = useState<SessionState>({
     id: null,
     status: "idle",
+    cached: false,
   });
+
+  // History of analysis sessions for the selected dataset.
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+
+  // In-memory cache of engine results for the current visit, keyed by
+  // `${datasetId}:${target}:${engineKey}`. This skips redundant network calls
+  // when switching between tabs; the backend also caches, so this is purely a
+  // client-side speed-up. Cleared whenever the selected dataset changes.
+  const resultsCacheRef = React.useRef<Map<string, any>>(new Map());
 
   // Initialize API Base and load initial projects
   useEffect(() => {
@@ -179,6 +218,31 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  // Like apiFetch, but also returns response headers so callers can read the
+  // cache metadata (X-DetaBeta-Cached / X-DetaBeta-Session-Id) the analysis
+  // endpoints attach.
+  const apiFetchWithHeaders = async (path: string, options: RequestInit = {}) => {
+    const headers = options.body instanceof FormData
+      ? {}
+      : { "Content-Type": "application/json", ...(options.headers || {}) };
+    const url = `${apiBase.replace(/\/$/, "")}${path}`;
+    try {
+      const response = await fetch(url, { ...options, headers });
+      const contentType = response.headers.get("content-type") || "";
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : await response.text();
+      if (!response.ok) {
+        const errorDetail = data?.detail || data?.message || response.statusText || "Request failed";
+        throw new Error(typeof errorDetail === "string" ? errorDetail : JSON.stringify(errorDetail));
+      }
+      return { data, headers: response.headers };
+    } catch (error: any) {
+      showToast(error.message || "Network error occurred", "error");
+      throw error;
+    }
+  };
+
   const loadProjects = async () => {
     try {
       const data = await apiFetch("/projects");
@@ -202,6 +266,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setSelectedDatasetId(null);
     setSelectedDataset(null);
     setDatasets([]);
+    resultsCacheRef.current.clear();
+    setSessions([]);
+    setSession({ id: null, status: "idle", cached: false });
     closeRightPanel();
     if (projectId) {
       await loadDatasets(projectId);
@@ -215,6 +282,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const selectDataset = async (datasetId: number | null) => {
     setSelectedDatasetId(datasetId);
     closeRightPanel();
+    // A new dataset means a fresh analysis context: drop the client-side cache
+    // and any loaded session history from the previous dataset.
+    resultsCacheRef.current.clear();
+    setSessions([]);
+    setSession({ id: null, status: "idle", cached: false });
     if (datasetId) {
       const ds = datasets.find((d) => d.id === datasetId) || null;
       setSelectedDataset(ds);
@@ -291,18 +363,94 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
-  const runAnalysis = async (engineKey: string, target?: string) => {
+  const runAnalysis = async (
+    engineKey: string,
+    target?: string,
+    opts?: { refresh?: boolean }
+  ) => {
     if (!selectedDatasetId) throw new Error("No dataset selected");
-    
-    setSession({ id: `session-${Date.now()}`, status: "running" });
-    const query = target ? `?target=${encodeURIComponent(target)}` : "";
-    
+
+    const refresh = opts?.refresh === true;
+    const cacheKey = `${selectedDatasetId}:${target || ""}:${engineKey}`;
+
+    // Serve from the client-side cache within a visit unless a refresh is asked.
+    if (!refresh && resultsCacheRef.current.has(cacheKey)) {
+      setSession((prev) => ({ ...prev, status: "completed", cached: true }));
+      return resultsCacheRef.current.get(cacheKey);
+    }
+
+    setSession((prev) => ({ ...prev, status: "running", cached: false }));
+
+    const params = new URLSearchParams();
+    if (target) params.set("target", target);
+    if (refresh) params.set("refresh", "true");
+    const query = params.toString() ? `?${params.toString()}` : "";
+
     try {
-      const res = await apiFetch(`/datasets/${selectedDatasetId}/analysis/${engineKey}${query}`);
-      setSession((prev) => ({ ...prev, status: "completed" }));
-      return res;
+      const { data, headers } = await apiFetchWithHeaders(
+        `/datasets/${selectedDatasetId}/analysis/${engineKey}${query}`
+      );
+      const cached = headers.get("X-DetaBeta-Cached") === "true";
+      const sessionIdHeader = headers.get("X-DetaBeta-Session-Id");
+      const sessionId = sessionIdHeader ? Number(sessionIdHeader) : null;
+
+      resultsCacheRef.current.set(cacheKey, data);
+      setSession({ id: sessionId, status: "completed", cached });
+      return data;
     } catch (e) {
-      setSession((prev) => ({ ...prev, status: "failed" }));
+      setSession((prev) => ({ ...prev, status: "failed", cached: false }));
+      throw e;
+    }
+  };
+
+  const applyTransform = async (
+    datasetId: number,
+    payload: { transform: string; columns: string[]; evidence?: any; title?: string }
+  ): Promise<ApplyTransformResult> => {
+    const result = await apiFetch(`/datasets/${datasetId}/apply-transform`, {
+      method: "POST",
+      body: JSON.stringify({
+        transform: payload.transform,
+        columns: payload.columns,
+        evidence: payload.evidence ?? {},
+        title: payload.title ?? null,
+      }),
+    });
+    // The new version is a fresh dataset: refresh the project's dataset list
+    // and the project cards (dataset_count) so the UI reflects it immediately.
+    if (selectedProjectId) {
+      await loadDatasets(selectedProjectId);
+      await loadProjects();
+    }
+    return result as ApplyTransformResult;
+  };
+
+  const loadSessions = async (target?: string) => {
+    if (!selectedDatasetId) return;
+    const query = target ? `?target=${encodeURIComponent(target)}` : "";
+    try {
+      const data = await apiFetch(`/datasets/${selectedDatasetId}/sessions${query}`);
+      setSessions(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const rerunSession = async (target?: string) => {
+    if (!selectedDatasetId) throw new Error("No dataset selected");
+    const query = target ? `?target=${encodeURIComponent(target)}` : "";
+    try {
+      await apiFetch(`/datasets/${selectedDatasetId}/sessions/rerun${query}`, {
+        method: "POST",
+      });
+      // A fresh session version starts empty: clear the client cache so the
+      // next analysis calls recompute against the new session.
+      resultsCacheRef.current.clear();
+      setSession({ id: null, status: "idle", cached: false });
+      await loadSessions(target);
+      showToast("Started a new analysis session");
+    } catch (e) {
+      console.error(e);
       throw e;
     }
   };
@@ -326,6 +474,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         showToast,
         session,
         setSession,
+        sessions,
+        loadSessions,
+        rerunSession,
         loadProjects,
         loadDatasets,
         selectProject,
@@ -335,6 +486,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteProject,
         deleteDataset,
         runAnalysis,
+        applyTransform,
       }}
     >
       {children}

@@ -11,7 +11,8 @@ scikit-learn>=1.4    # Engine 7 (Experiment Studio): pipelines, cross-validation
 fastapi>=0.115          # the web framework
 uvicorn[standard]>=0.30 # the ASGI server that runs the app
 python-multipart>=0.0.9 # required by FastAPI to parse file uploads
-sqlalchemy>=2.0         # ORM for the Project + Dataset tables (SQLite in dev)
+sqlalchemy>=2.0         # ORM for our tables (SQLite in dev, Neon Postgres in prod)
+psycopg[binary]>=3.1    # PostgreSQL driver (psycopg v3) used when DATABASE_URL points at Neon
 
 # --- Testing ---
 pytest>=8.0

@@ -13,6 +13,90 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+// ----------------------------------------------------
+// Real cross-validated confusion matrix (binary + multiclass)
+// ----------------------------------------------------
+const ConfusionMatrixPanel: React.FC<{ confusion: any }> = ({ confusion }) => {
+  if (!confusion) {
+    return (
+      <div className="text-[11px] text-zinc-500 text-center py-8 border border-dashed border-zinc-800 rounded">
+        A confusion matrix only applies to classification targets. This target is
+        continuous (regression), so error is measured by residuals instead.
+      </div>
+    );
+  }
+
+  const accuracyPct = (confusion.accuracy * 100).toFixed(1);
+
+  // Binary: the familiar TN / FP / FN / TP quadrants with real counts.
+  if (confusion.is_binary) {
+    const { true_negative: tn, false_positive: fp, false_negative: fn, true_positive: tp } = confusion;
+    const cell = (label: string, value: number, sub: string, good: boolean) => (
+      <div className="p-4 bg-zinc-950/60 rounded border border-zinc-900 flex flex-col justify-center">
+        <span className="text-[10px] text-zinc-500 uppercase">{label}</span>
+        <strong className={`text-sm mt-1 ${good ? "text-zinc-200" : "text-rose-400"}`}>{value}</strong>
+        <span className={`text-[9px] mt-0.5 ${good ? "text-emerald-400" : "text-rose-500/80"}`}>{sub}</span>
+      </div>
+    );
+    return (
+      <div className="space-y-3">
+        <div className="text-[10px] text-zinc-500 text-center font-mono">
+          Positive class: <span className="text-zinc-300">{String(confusion.positive_label)}</span> · Accuracy {accuracyPct}% · {confusion.n_samples} rows
+        </div>
+        <div className="grid grid-cols-2 gap-2 max-w-xs mx-auto text-center font-mono text-xs">
+          {cell("True Negative", tn, "Correct", true)}
+          {cell("False Positive", fp, "Type I Error", false)}
+          {cell("False Negative", fn, "Type II Error", false)}
+          {cell("True Positive", tp, "Correct", true)}
+        </div>
+      </div>
+    );
+  }
+
+  // Multiclass: full labels x labels grid, diagonal (correct) highlighted.
+  const labels: any[] = confusion.labels || [];
+  const matrix: number[][] = confusion.matrix || [];
+  return (
+    <div className="space-y-3">
+      <div className="text-[10px] text-zinc-500 text-center font-mono">
+        Accuracy {accuracyPct}% · {confusion.n_samples} rows · rows = actual, columns = predicted
+      </div>
+      <div className="overflow-x-auto">
+        <table className="mx-auto border-collapse font-mono text-[10px]">
+          <thead>
+            <tr>
+              <th className="p-1.5" />
+              {labels.map((l) => (
+                <th key={`h-${l}`} className="p-1.5 text-zinc-500 font-medium">{String(l)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {matrix.map((row, i) => (
+              <tr key={`r-${i}`}>
+                <th className="p-1.5 text-right text-zinc-500 font-medium">{String(labels[i])}</th>
+                {row.map((count, j) => {
+                  const isDiag = i === j;
+                  return (
+                    <td
+                      key={`c-${i}-${j}`}
+                      className={`p-2.5 text-center border border-zinc-900 ${
+                        isDiag ? "bg-emerald-950/40 text-emerald-300" : count > 0 ? "bg-rose-950/20 text-rose-300" : "bg-zinc-950/60 text-zinc-600"
+                      }`}
+                    >
+                      {count}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 export const ExplainabilityView: React.FC = () => {
   const { selectedDatasetId, runAnalysis, openRightPanel, apiBase } = useWorkspace();
   
@@ -37,12 +121,17 @@ export const ExplainabilityView: React.FC = () => {
       const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
       if (res.ok) {
         const preview = await res.json();
-        setColumns(preview.columns || []);
-        
-        // Find default target
-        const defaultTgt = (preview.columns || []).find((c: string) => 
-          c.toLowerCase() === "survived" || c.toLowerCase() === "churn"
-        );
+        const cols: string[] = preview.columns || [];
+        setColumns(cols);
+
+        // Pick a sensible default target: a column that looks like a label/
+        // outcome, otherwise fall back to the last column. No dataset-specific
+        // assumptions.
+        const TARGET_HINTS = ["target", "label", "class", "outcome", "survived", "churn", "y"];
+        const defaultTgt =
+          cols.find((c) => TARGET_HINTS.includes(c.toLowerCase())) ??
+          (cols.length > 0 ? cols[cols.length - 1] : "");
+
         if (defaultTgt) {
           setTarget(defaultTgt);
           // Run explain engine
@@ -181,33 +270,11 @@ export const ExplainabilityView: React.FC = () => {
                   Where does the model make mistakes?
                 </h3>
                 <p className="text-[10px] text-zinc-500 mt-0.5">
-                  Triage cross-validation confusion errors. Explains misclassifications.
+                  Out-of-fold (cross-validated) predictions. Shows real misclassifications, not training-set memorization.
                 </p>
               </div>
 
-              {/* Confusion matrix grid */}
-              <div className="grid grid-cols-2 gap-2 max-w-xs mx-auto text-center font-mono text-xs">
-                <div className="p-4 bg-zinc-950/60 rounded border border-zinc-900 flex flex-col justify-center">
-                  <span className="text-[10px] text-zinc-500 uppercase">True Negative</span>
-                  <strong className="text-zinc-200 text-sm mt-1">482</strong>
-                  <span className="text-[9px] text-emerald-450 mt-0.5">Correct (85%)</span>
-                </div>
-                <div className="p-4 bg-zinc-950/60 rounded border border-zinc-900 flex flex-col justify-center">
-                  <span className="text-[10px] text-zinc-500 uppercase">False Positive</span>
-                  <strong className="text-rose-450 text-sm mt-1">42</strong>
-                  <span className="text-[9px] text-rose-500/80 mt-0.5">Type I Error</span>
-                </div>
-                <div className="p-4 bg-zinc-950/60 rounded border border-zinc-900 flex flex-col justify-center">
-                  <span className="text-[10px] text-zinc-500 uppercase">False Negative</span>
-                  <strong className="text-rose-450 text-sm mt-1">31</strong>
-                  <span className="text-[9px] text-rose-500/80 mt-0.5">Type II Error</span>
-                </div>
-                <div className="p-4 bg-zinc-950/60 rounded border border-zinc-900 flex flex-col justify-center">
-                  <span className="text-[10px] text-zinc-500 uppercase">True Positive</span>
-                  <strong className="text-zinc-200 text-sm mt-1">214</strong>
-                  <span className="text-[9px] text-emerald-450 mt-0.5">Correct (78%)</span>
-                </div>
-              </div>
+              <ConfusionMatrixPanel confusion={report.confusion} />
             </div>
           </div>
 
@@ -232,7 +299,7 @@ export const ExplainabilityView: React.FC = () => {
                 >
                   {report.examples?.map((ex: any) => (
                     <option key={ex.row_index} value={ex.row_index}>
-                      Passenger #{ex.row_index} ({ex.predicted_label === 1 || ex.predicted_label === "Yes" ? "Survived" : "Died"})
+                      Row #{ex.row_index} → {target}: {String(ex.predicted_label)}
                     </option>
                   ))}
                 </select>
@@ -251,7 +318,9 @@ export const ExplainabilityView: React.FC = () => {
                       Inspect Waterfall contributions for row #{activeExplanation.row_index}
                     </h4>
                     <p className="text-[10px] text-zinc-500">
-                      Baseline probability: {((activeExplanation.baseline_prediction || 0.4) * 100).toFixed(0)}% · Final probability: {((activeExplanation.predicted_probability || 0.8) * 100).toFixed(0)}%
+                      {typeof activeExplanation.predicted_probability === "number"
+                        ? `Baseline: ${(activeExplanation.baseline_prediction * 100).toFixed(0)}% → Final: ${(activeExplanation.predicted_probability * 100).toFixed(0)}%`
+                        : `Baseline: ${Number(activeExplanation.baseline_prediction).toFixed(2)} → Predicted: ${Number(activeExplanation.predicted_label).toFixed(2)}`}
                     </p>
                   </div>
                   <BrainCircuit className="w-6 h-6 text-zinc-600 group-hover:text-emerald-400 transition flex-shrink-0 ml-4" />

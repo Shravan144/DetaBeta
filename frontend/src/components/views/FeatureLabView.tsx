@@ -5,7 +5,7 @@ import { useWorkspace } from "@/context/WorkspaceContext";
 import { Sliders, CheckCircle, Info, Loader2, Sparkles, AlertTriangle, ArrowRight } from "lucide-react";
 
 export const FeatureLabView: React.FC = () => {
-  const { selectedDatasetId, runAnalysis, openRightPanel, datasets, loadDatasets, selectedProjectId, showToast } = useWorkspace();
+  const { selectedDatasetId, runAnalysis, openRightPanel, applyTransform, showToast } = useWorkspace();
   const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [applyingIdx, setApplyingIdx] = useState<number | null>(null);
@@ -28,17 +28,30 @@ export const FeatureLabView: React.FC = () => {
     }
   };
 
-  const handleApplyTransform = (rec: any, idx: number) => {
+  const handleApplyTransform = async (rec: any, idx: number) => {
+    if (!selectedDatasetId) return;
     setApplyingIdx(idx);
-    
-    // Simulate data engine applying transformation to create v2
-    setTimeout(async () => {
+    try {
+      const result = await applyTransform(selectedDatasetId, {
+        transform: rec.transform,
+        columns: rec.columns,
+        evidence: rec.evidence,
+        title: rec.title,
+      });
+      const { score: before } = result.health_before;
+      const { score: after, grade } = result.health_after;
+      const delta = Math.round((after - before) * 10) / 10;
+      const deltaText =
+        delta > 0 ? `health +${delta} → ${after}/100 (${grade})`
+        : delta < 0 ? `health ${delta} → ${after}/100 (${grade})`
+        : `health unchanged at ${after}/100 (${grade})`;
+      showToast(`Created ${result.dataset.name} — ${deltaText}`);
+    } catch (e) {
+      // applyTransform already surfaces an error toast; nothing more to do.
+      console.error(e);
+    } finally {
       setApplyingIdx(null);
-      showToast(`Applied ${rec.title}. Created new dataset version: passengers_v2.csv`);
-      if (selectedProjectId) {
-        await loadDatasets(selectedProjectId);
-      }
-    }, 2000);
+    }
   };
 
   if (loading) {
