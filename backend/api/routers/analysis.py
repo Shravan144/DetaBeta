@@ -1,29 +1,41 @@
 """
-Analysis router: the 9 engine endpoints.
+Analysis router: the 9 engine endpoints (now session-cached).
 
 Every endpoint follows the same tiny pattern:
-  1. FastAPI loads the dataset's DataFrame via the `load_dataset_df` dependency
-     (which handles 404s for a missing dataset or file).
-  2. We call the matching function in the analysis service.
-  3. We return its JSON-safe dict.
+  1. FastAPI loads the dataset (`get_dataset_or_404`) and its DataFrame
+     (`load_dataset_df`), plus a DB session (`get_db`).
+  2. We delegate to `services.sessions.run_cached`, which finds or creates the
+     active analysis session for this (dataset, target), returns a cached engine
+     result if one exists, or runs the engine fresh and stores it.
+  3. We return the engine's JSON-safe dict -- exactly as before, so the frontend
+     contract is unchanged.
 
-The only variation is whether a `target` query parameter is optional (analysis
-half + report) or required (modelling half). A missing/invalid required target
-raises TargetError in the service, which we translate into HTTP 400 here.
+Cache metadata (was this served from cache? which session? how long did it
+take?) is attached as response headers so callers can surface it without the
+response body shape changing:
+    X-DetaBeta-Cached:     "true" | "false"
+    X-DetaBeta-Session-Id: <int>
+    X-DetaBeta-Duration-Ms:<int>
+
+A `refresh=true` query parameter forces the engine to recompute and overwrite
+its cached result. A missing/invalid required target still raises TargetError,
+which we translate into HTTP 400.
 
 Example:
     GET /api/datasets/3/analysis/health
     GET /api/datasets/3/analysis/experiment?target=survived
+    GET /api/datasets/3/analysis/experiment?target=survived&refresh=true
 """
 
 from __future__ import annotations
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy.orm import Session
 
 from api.deps import get_dataset_or_404, load_dataset_df
-from db import Dataset
-from services import analysis
+from db import Dataset, get_db
+from services import sessions
 from services.analysis import TargetError
 
 # All analysis endpoints hang off a single dataset.
@@ -37,15 +49,40 @@ _TargetQuery = Query(
     "Required for recommend, experiment, and explain.",
 )
 
+# Whether to bypass the cache and recompute this engine.
+_RefreshQuery = Query(
+    default=False,
+    description="Set true to recompute and overwrite the cached result.",
+)
 
-def _guard_target(func, *args, **kwargs) -> dict:
-    """Run an analysis function, converting TargetError into a clean 400."""
+
+def _run(
+    response: Response,
+    db: Session,
+    dataset: Dataset,
+    df: pd.DataFrame,
+    engine_key: str,
+    target: str | None,
+    refresh: bool,
+) -> dict:
+    """Run an engine through the session cache and attach cache-info headers.
+
+    TargetError (missing/invalid required target) becomes a clean HTTP 400.
+    """
     try:
-        return func(*args, **kwargs)
+        outcome = sessions.run_cached(
+            db, dataset, df, engine_key, target=target, refresh=refresh
+        )
     except TargetError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
+
+    response.headers["X-DetaBeta-Cached"] = "true" if outcome.cached else "false"
+    response.headers["X-DetaBeta-Session-Id"] = str(outcome.session_id)
+    if outcome.duration_ms is not None:
+        response.headers["X-DetaBeta-Duration-Ms"] = str(outcome.duration_ms)
+    return outcome.result
 
 
 # ---------------------------------------------------------------------------
@@ -53,39 +90,66 @@ def _guard_target(func, *args, **kwargs) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("/understand")
-def understand(df: pd.DataFrame = Depends(load_dataset_df)) -> dict:
+def understand(
+    response: Response,
+    dataset: Dataset = Depends(get_dataset_or_404),
+    df: pd.DataFrame = Depends(load_dataset_df),
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
+) -> dict:
     """Engine 1 -- What kind of data is this?"""
-    return analysis.understand(df)
+    return _run(response, db, dataset, df, "understand", None, refresh)
 
 
 @router.get("/health")
-def health(df: pd.DataFrame = Depends(load_dataset_df)) -> dict:
+def health(
+    response: Response,
+    dataset: Dataset = Depends(get_dataset_or_404),
+    df: pd.DataFrame = Depends(load_dataset_df),
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
+) -> dict:
     """Engine 2 -- Can I trust this dataset?"""
-    return analysis.health(df)
+    return _run(response, db, dataset, df, "health", None, refresh)
 
 
 @router.get("/investigate")
 def investigate(
-    df: pd.DataFrame = Depends(load_dataset_df), target: str | None = _TargetQuery
+    response: Response,
+    dataset: Dataset = Depends(get_dataset_or_404),
+    df: pd.DataFrame = Depends(load_dataset_df),
+    target: str | None = _TargetQuery,
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
 ) -> dict:
     """Engine 3 -- What interesting things exist?"""
-    return analysis.investigation(df, target=target)
+    return _run(response, db, dataset, df, "investigate", target, refresh)
 
 
 @router.get("/statistics")
 def statistics(
-    df: pd.DataFrame = Depends(load_dataset_df), target: str | None = _TargetQuery
+    response: Response,
+    dataset: Dataset = Depends(get_dataset_or_404),
+    df: pd.DataFrame = Depends(load_dataset_df),
+    target: str | None = _TargetQuery,
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
 ) -> dict:
     """Engine 4 -- Are these findings statistically meaningful?"""
-    return analysis.statistics(df, target=target)
+    return _run(response, db, dataset, df, "statistics", target, refresh)
 
 
 @router.get("/feature-lab")
 def feature_lab(
-    df: pd.DataFrame = Depends(load_dataset_df), target: str | None = _TargetQuery
+    response: Response,
+    dataset: Dataset = Depends(get_dataset_or_404),
+    df: pd.DataFrame = Depends(load_dataset_df),
+    target: str | None = _TargetQuery,
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
 ) -> dict:
     """Engine 5 -- How can this data be improved?"""
-    return analysis.feature_lab(df, target=target)
+    return _run(response, db, dataset, df, "feature-lab", target, refresh)
 
 
 # ---------------------------------------------------------------------------
@@ -94,26 +158,41 @@ def feature_lab(
 
 @router.get("/recommend")
 def recommend(
-    df: pd.DataFrame = Depends(load_dataset_df), target: str | None = _TargetQuery
+    response: Response,
+    dataset: Dataset = Depends(get_dataset_or_404),
+    df: pd.DataFrame = Depends(load_dataset_df),
+    target: str | None = _TargetQuery,
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
 ) -> dict:
     """Engine 6 -- What should I model, and how?"""
-    return _guard_target(analysis.recommendation, df, target=target)
+    return _run(response, db, dataset, df, "recommend", target, refresh)
 
 
 @router.get("/experiment")
 def experiment(
-    df: pd.DataFrame = Depends(load_dataset_df), target: str | None = _TargetQuery
+    response: Response,
+    dataset: Dataset = Depends(get_dataset_or_404),
+    df: pd.DataFrame = Depends(load_dataset_df),
+    target: str | None = _TargetQuery,
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
 ) -> dict:
     """Engine 7 -- Which model performs best?"""
-    return _guard_target(analysis.experiment, df, target=target)
+    return _run(response, db, dataset, df, "experiment", target, refresh)
 
 
 @router.get("/explain")
 def explain(
-    df: pd.DataFrame = Depends(load_dataset_df), target: str | None = _TargetQuery
+    response: Response,
+    dataset: Dataset = Depends(get_dataset_or_404),
+    df: pd.DataFrame = Depends(load_dataset_df),
+    target: str | None = _TargetQuery,
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
 ) -> dict:
     """Engine 8 -- Why did the model predict this?"""
-    return _guard_target(analysis.explain, df, target=target)
+    return _run(response, db, dataset, df, "explain", target, refresh)
 
 
 # ---------------------------------------------------------------------------
@@ -122,9 +201,12 @@ def explain(
 
 @router.get("/report")
 def report(
+    response: Response,
     dataset: Dataset = Depends(get_dataset_or_404),
     df: pd.DataFrame = Depends(load_dataset_df),
     target: str | None = _TargetQuery,
+    refresh: bool = _RefreshQuery,
+    db: Session = Depends(get_db),
 ) -> dict:
     """Engine 9 -- What should another human learn from this?"""
-    return _guard_target(analysis.report, df, target=target, dataset_name=dataset.name)
+    return _run(response, db, dataset, df, "report", target, refresh)

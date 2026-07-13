@@ -72,6 +72,44 @@ class DatasetPreview(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Analysis sessions & cached engine results
+# ---------------------------------------------------------------------------
+
+class SessionOut(BaseModel):
+    """An analysis session (one run over a dataset for a target), summarized."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    dataset_id: int
+    # None for the target-independent "base" session (understand + health).
+    target: str | None = None
+    created_at: datetime
+    # Which engines already have a cached result in this session.
+    completed_engine_keys: list[str] = Field(default_factory=list)
+
+
+class EngineResultOut(BaseModel):
+    """A single engine's cached result inside a session (with parsed output)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    engine_key: str
+    status: str
+    duration_ms: int | None = None
+    error: str | None = None
+    created_at: datetime
+    # The parsed engine output. Loosely typed like the analysis responses.
+    result: dict = Field(default_factory=dict)
+
+
+class SessionDetailOut(SessionOut):
+    """A session plus the full cached results of every engine that has run."""
+
+    results: list[EngineResultOut] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Shared
 # ---------------------------------------------------------------------------
 

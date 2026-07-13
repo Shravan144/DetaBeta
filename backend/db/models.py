@@ -1,26 +1,42 @@
 """
 Database models: the shape of what we store.
 
-WHY ONLY TWO TABLES?
---------------------
-Per our plan, the backend does NOT cache engine results. The engines are pure
-functions that run on demand. So the only things worth persisting are:
+WHAT WE PERSIST
+---------------
+  * Project         -- a workspace/folder that groups related work.
+  * Dataset         -- one uploaded CSV file that belongs to a project.
+  * AnalysisSession -- one "run" over a dataset for a given target column.
+  * EngineResult    -- a single engine's cached output within a session.
 
-  * Project  -- a workspace/folder that groups related work.
-  * Dataset  -- one uploaded CSV file that belongs to a project.
+WHY SESSIONS AND CACHED RESULTS?
+--------------------------------
+The engines are still pure functions, but recomputing them on every request is
+wasteful and throws away useful history. A *session* groups the results of the
+engines for one (dataset, target) combination:
 
-That is enough to model your document's "Project" concept and to let the UI
-list projects, list their datasets, and run analyses on a chosen dataset.
+  * Speed             -- each engine runs once per session, then is read from the
+                         DB instantly on later visits ("lazy per-engine caching").
+  * History           -- sessions are append-only. A "re-run" creates a new
+                         session version; the old one is preserved so past
+                         analyses can be listed and compared.
+  * Improvement track -- re-running after cleaning produces a new session, so
+                         health/metrics changes over time become visible.
 
-Everything the engines produce (profiles, health reports, model results...) is
-computed fresh from the stored CSV each time it is requested.
+The raw CSV still lives on disk; sessions only store the engines' JSON output.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.session import Base
@@ -79,3 +95,82 @@ class Dataset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
     project: Mapped["Project"] = relationship(back_populates="datasets")
+
+    # Deleting a dataset removes all of its analysis sessions (and their cached
+    # engine results, which cascade from the session).
+    sessions: Mapped[list["AnalysisSession"]] = relationship(
+        back_populates="dataset",
+        cascade="all, delete-orphan",
+        order_by="AnalysisSession.created_at",
+    )
+
+
+class AnalysisSession(Base):
+    """One analysis "run" over a dataset for a given target column.
+
+    A session is the container for cached engine outputs. There can be many
+    sessions per (dataset, target) pair -- that is the version history. The
+    newest one for a (dataset, target) is treated as the "active" session; older
+    ones are kept so past analyses can be listed and compared.
+
+    ``target`` is nullable on purpose:
+      * NULL          -> the "base" session holding target-independent engines
+                         (dataset understanding, data health). Computed once and
+                         reused across every target-specific session.
+      * a column name -> a session for the target-dependent engines (ML
+                         recommendation, experiment studio, explainability, ...).
+    """
+
+    __tablename__ = "analysis_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(
+        ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # None = target-independent base session; otherwise the chosen target column.
+    target: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    dataset: Mapped["Dataset"] = relationship(back_populates="sessions")
+
+    # One cached row per engine per session (enforced below).
+    results: Mapped[list["EngineResult"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="EngineResult.created_at",
+    )
+
+
+class EngineResult(Base):
+    """A single engine's cached output inside a session.
+
+    ``result_json`` holds the JSON-safe dict the engine produced (already run
+    through the serialization service), stored as a text blob. We keep it as
+    text rather than a JSON column so the models stay portable across SQLite and
+    Postgres without extra type handling.
+    """
+
+    __tablename__ = "engine_results"
+    __table_args__ = (
+        # A given engine is cached at most once per session; re-running an engine
+        # updates this row (or a new session is created for a fresh version).
+        UniqueConstraint("session_id", "engine_key", name="uq_engine_per_session"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Which engine produced this, e.g. "understand", "health", "experiment".
+    engine_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    # "completed" when the engine returned output, "failed" when it raised.
+    status: Mapped[str] = mapped_column(String(20), default="completed", nullable=False)
+    # JSON-encoded engine output (empty string when the run failed).
+    result_json: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # Human-readable error message when status == "failed".
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # How long the engine took, in milliseconds (None if unknown).
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    session: Mapped["AnalysisSession"] = relationship(back_populates="results")
