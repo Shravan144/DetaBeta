@@ -92,6 +92,17 @@ interface WorkspaceContextProps {
     target?: string,
     opts?: { refresh?: boolean }
   ) => Promise<any>;
+  applyTransform: (
+    datasetId: number,
+    payload: { transform: string; columns: string[]; evidence?: any; title?: string }
+  ) => Promise<ApplyTransformResult>;
+}
+
+export interface ApplyTransformResult {
+  dataset: Dataset;
+  changes: string[];
+  health_before: { score: number; grade: string };
+  health_after: { score: number; grade: string };
 }
 
 const WorkspaceContext = createContext<WorkspaceContextProps | undefined>(undefined);
@@ -392,6 +403,28 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  const applyTransform = async (
+    datasetId: number,
+    payload: { transform: string; columns: string[]; evidence?: any; title?: string }
+  ): Promise<ApplyTransformResult> => {
+    const result = await apiFetch(`/datasets/${datasetId}/apply-transform`, {
+      method: "POST",
+      body: JSON.stringify({
+        transform: payload.transform,
+        columns: payload.columns,
+        evidence: payload.evidence ?? {},
+        title: payload.title ?? null,
+      }),
+    });
+    // The new version is a fresh dataset: refresh the project's dataset list
+    // and the project cards (dataset_count) so the UI reflects it immediately.
+    if (selectedProjectId) {
+      await loadDatasets(selectedProjectId);
+      await loadProjects();
+    }
+    return result as ApplyTransformResult;
+  };
+
   const loadSessions = async (target?: string) => {
     if (!selectedDatasetId) return;
     const query = target ? `?target=${encodeURIComponent(target)}` : "";
@@ -453,6 +486,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteProject,
         deleteDataset,
         runAnalysis,
+        applyTransform,
       }}
     >
       {children}

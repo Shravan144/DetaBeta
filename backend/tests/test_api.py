@@ -177,3 +177,83 @@ def test_invalid_target_returns_400(client):
 
 def test_analysis_on_missing_dataset_404(client):
     assert client.get("datasets/99999/analysis/understand").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Feature Lab: apply a transform -> new dataset version
+# ---------------------------------------------------------------------------
+
+def test_apply_transform_creates_new_version(client):
+    pid = _make_project(client)
+    did = _upload_sample(client, pid)
+
+    # Drop the identifier column; expect a NEW dataset with one fewer column.
+    resp = client.post(
+        f"datasets/{did}/apply-transform",
+        json={"transform": "drop_column", "columns": ["passenger_id"]},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+
+    # A brand-new dataset id + versioned name, original left intact.
+    assert body["dataset"]["id"] != did
+    assert body["dataset"]["name"] == "passengers_v2.csv"
+    assert body["dataset"]["n_columns"] == 10  # was 11
+    assert client.get(f"datasets/{did}").json()["n_columns"] == 11
+
+    # Health snapshots are present and well-formed.
+    assert "health_before" in body and "health_after" in body
+    assert 0 <= body["health_after"]["score"] <= 100
+    assert body["changes"]
+
+    # The project now lists two datasets.
+    listing = client.get(f"projects/{pid}/datasets").json()
+    assert len(listing) == 2
+
+
+def test_apply_transform_health_improves_when_clipping_outliers(client):
+    pid = _make_project(client)
+    did = _upload_sample(client, pid)
+
+    # Feature Lab flags 'fare' for outlier clipping; applying it should not
+    # lower the health score (clipping removes an outlier issue).
+    resp = client.post(
+        f"datasets/{did}/apply-transform",
+        json={
+            "transform": "clip_outliers",
+            "columns": ["fare"],
+            "evidence": {"lower_bound": 0.0, "upper_bound": 100.0},
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["health_after"]["score"] >= body["health_before"]["score"]
+
+
+def test_apply_transform_versions_increment(client):
+    pid = _make_project(client)
+    did = _upload_sample(client, pid)
+    payload = {"transform": "drop_column", "columns": ["passenger_id"]}
+    first = client.post(f"datasets/{did}/apply-transform", json=payload).json()
+    assert first["dataset"]["name"] == "passengers_v2.csv"
+    # Applying again to the original produces _v3 (not a duplicate _v2).
+    second = client.post(f"datasets/{did}/apply-transform", json=payload).json()
+    assert second["dataset"]["name"] == "passengers_v3.csv"
+
+
+def test_apply_transform_bad_column_returns_400(client):
+    pid = _make_project(client)
+    did = _upload_sample(client, pid)
+    resp = client.post(
+        f"datasets/{did}/apply-transform",
+        json={"transform": "drop_column", "columns": ["does_not_exist"]},
+    )
+    assert resp.status_code == 400
+
+
+def test_apply_transform_on_missing_dataset_404(client):
+    resp = client.post(
+        "datasets/99999/apply-transform",
+        json={"transform": "drop_column", "columns": ["x"]},
+    )
+    assert resp.status_code == 404

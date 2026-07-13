@@ -71,6 +71,35 @@ class DatasetPreview(BaseModel):
     rows: list[dict]  # first N rows as records
 
 
+class ApplyTransformRequest(BaseModel):
+    """Body for applying one Feature Lab recommendation to create a new version."""
+
+    # A TransformType value, e.g. "log_transform" (validated by the applier).
+    transform: str = Field(min_length=1, examples=["log_transform"])
+    # Column(s) the recommendation targeted.
+    columns: list[str] = Field(min_length=1)
+    # The recommendation's evidence dict (clip bounds, thresholds, ...). Optional.
+    evidence: dict = Field(default_factory=dict)
+    # Optional human label for the change (used in notes/lineage).
+    title: str | None = None
+
+
+class HealthSnapshot(BaseModel):
+    """A tiny before/after health reading so the UI can show the improvement."""
+
+    score: float
+    grade: str
+
+
+class ApplyTransformResult(BaseModel):
+    """Result of applying a transform: the new dataset version + what changed."""
+
+    dataset: DatasetOut               # the newly created dataset version
+    changes: list[str]                # human-readable change notes
+    health_before: HealthSnapshot
+    health_after: HealthSnapshot
+
+
 # ---------------------------------------------------------------------------
 # Analysis sessions & cached engine results
 # ---------------------------------------------------------------------------

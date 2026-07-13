@@ -63,6 +63,38 @@ def save_csv_bytes(project_id: int, filename: str, data: bytes) -> tuple[str, in
     return rel_path, int(df.shape[0]), int(df.shape[1])
 
 
+def save_dataframe(project_id: int, filename: str, df: pd.DataFrame) -> tuple[str, int, int]:
+    """Persist a DataFrame as a CSV, choosing a non-colliding filename.
+
+    Used when we *derive* a new dataset (e.g. after applying a Feature Lab
+    transform). If `filename` already exists in the project folder we append a
+    numeric suffix ("passengers_v2.csv" -> "passengers_v2_1.csv") so we never
+    silently overwrite an existing version.
+
+    Returns (relative_storage_path, n_rows, n_columns).
+    """
+    safe_name = _safe_filename(filename)
+    dest = _unique_path(_project_dir(project_id), safe_name)
+    df.to_csv(dest, index=False)
+    rel_path = f"{project_id}/{dest.name}"
+    return rel_path, int(df.shape[0]), int(df.shape[1])
+
+
+def _unique_path(folder: Path, filename: str) -> Path:
+    """Return a path in `folder` that does not yet exist, suffixing if needed."""
+    candidate = folder / filename
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    i = 1
+    while True:
+        alt = folder / f"{stem}_{i}{suffix}"
+        if not alt.exists():
+            return alt
+        i += 1
+
+
 def load_dataframe(storage_path: str) -> pd.DataFrame:
     """Load a stored CSV back into a pandas DataFrame.
 
