@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Loader2, FileDown, CheckCircle, FileText, Sparkles, BookOpen } from "lucide-react";
+import { Loader2, FileDown, FileText, FileCode, BookOpen } from "lucide-react";
 
 export const ReportsView: React.FC = () => {
   const { selectedDatasetId, runAnalysis, apiBase, showToast } = useWorkspace();
@@ -11,6 +11,7 @@ export const ReportsView: React.FC = () => {
   const [target, setTarget] = useState("");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<any>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
 
   // Load columns to set default target
   useEffect(() => {
@@ -51,10 +52,48 @@ export const ReportsView: React.FC = () => {
     }
   };
 
-  const handlePrint = () => {
-    if (typeof window !== "undefined") {
-      window.print();
+  // Build the export URL for the current dataset/target and a given format.
+  const exportUrl = (format: "html" | "md" | "print") => {
+    const base = apiBase.replace(/\/$/, "");
+    const params = new URLSearchParams({ format });
+    if (target) params.set("target", target);
+    return `${base}/datasets/${selectedDatasetId}/analysis/report/export?${params.toString()}`;
+  };
+
+  // Download an HTML or Markdown file by fetching it as a blob.
+  const handleDownload = async (format: "html" | "md") => {
+    setExporting(format);
+    try {
+      const res = await fetch(exportUrl(format));
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      // Prefer the server-provided filename from Content-Disposition.
+      const disp = res.headers.get("content-disposition") || "";
+      const match = disp.match(/filename="?([^"]+)"?/);
+      const filename = match?.[1] || `detabeta_report.${format}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showToast(`Exported report as ${format.toUpperCase()}.`);
+    } catch (e) {
+      console.error(e);
+      showToast("Could not export the report.", "error");
+    } finally {
+      setExporting(null);
     }
+  };
+
+  // PDF export: open the print-optimized page in a new tab; it auto-opens the
+  // browser print dialog, where the user picks "Save as PDF". No PDF library
+  // is needed on the server, which keeps the free serverless tier happy.
+  const handleExportPdf = () => {
+    if (typeof window === "undefined") return;
+    window.open(exportUrl("print"), "_blank", "noopener,noreferrer");
   };
 
   if (loading) {
@@ -78,13 +117,38 @@ export const ReportsView: React.FC = () => {
         </div>
 
         {report && (
-          <div className="flex gap-2">
+          <div className="flex gap-2 print:hidden">
             <button
-              onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 border border-zinc-800 hover:bg-zinc-850 rounded text-zinc-300 text-[10px] font-semibold transition cursor-pointer"
+              onClick={() => handleDownload("html")}
+              disabled={exporting !== null}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 border border-zinc-800 hover:bg-zinc-850 disabled:opacity-50 rounded text-zinc-300 text-[10px] font-semibold transition cursor-pointer"
+            >
+              {exporting === "html" ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FileCode className="w-3.5 h-3.5" />
+              )}
+              <span>HTML</span>
+            </button>
+            <button
+              onClick={handleExportPdf}
+              disabled={exporting !== null}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 border border-zinc-800 hover:bg-zinc-850 disabled:opacity-50 rounded text-zinc-300 text-[10px] font-semibold transition cursor-pointer"
             >
               <FileDown className="w-3.5 h-3.5" />
-              <span>Export PDF</span>
+              <span>PDF</span>
+            </button>
+            <button
+              onClick={() => handleDownload("md")}
+              disabled={exporting !== null}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 border border-zinc-800 hover:bg-zinc-850 disabled:opacity-50 rounded text-zinc-300 text-[10px] font-semibold transition cursor-pointer"
+            >
+              {exporting === "md" ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <FileText className="w-3.5 h-3.5" />
+              )}
+              <span>Markdown</span>
             </button>
           </div>
         )}
