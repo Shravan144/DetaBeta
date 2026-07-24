@@ -14,7 +14,6 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  Sun,
   LayoutDashboard,
   BrainCircuit,
 } from "lucide-react";

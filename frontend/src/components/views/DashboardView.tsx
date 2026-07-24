@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Plus, Trash2, Calendar, FileSpreadsheet, Loader2, BarChart2 } from "lucide-react";
+import { Plus, Trash2, Calendar, FileSpreadsheet, Loader2 } from "lucide-react";
 
 export const DashboardView: React.FC = () => {
   const { projects, selectProject, createProject, deleteProject } = useWorkspace();

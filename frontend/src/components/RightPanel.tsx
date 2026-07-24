@@ -14,9 +14,56 @@ import {
   ResponsiveContainer,
   ScatterChart,
   Scatter,
-  Line,
-  ComposedChart,
 } from "recharts";
+
+type ColumnDetails = {
+  name: string;
+  semantic_type: string;
+  raw_dtype: string;
+  missing_pct: number;
+  n_missing: number;
+  n_total: number;
+  n_unique: number;
+  unique_pct: number;
+  stats?: Record<string, unknown>;
+  reasoning?: string[];
+};
+
+type FindingDetails = {
+  finding_type: string;
+  columns: string[];
+  strength: string;
+  title: string;
+  reasoning?: string[];
+  suggested_next_step?: string;
+  evidence?: {
+    pearson_r?: number;
+    spearman_rho?: number;
+    group_means?: Record<string, number>;
+    hist_bins?: number[];
+    hist_counts?: number[];
+  };
+};
+
+type TransformDetails = {
+  columns: string[];
+  title: string;
+  code_snippet?: string;
+};
+
+type ShapContribution = {
+  feature: string;
+  effect: number;
+  value: unknown;
+};
+
+type ShapDetails = {
+  row_index: number;
+  predicted_label: unknown;
+  predicted_probability?: number;
+  summary?: string;
+  contributions?: ShapContribution[];
+};
 
 export const RightPanel: React.FC = () => {
   const { rightPanel, closeRightPanel, showToast } = useWorkspace();
@@ -51,7 +98,8 @@ export const RightPanel: React.FC = () => {
   // ----------------------------------------------------
   // Column Details view
   // ----------------------------------------------------
-  const renderColumnPanel = (col: any) => {
+  const renderColumnPanel = (value: unknown) => {
+    const col = value as ColumnDetails;
     const isNum = col.semantic_type.includes("numeric") || col.raw_dtype.includes("int") || col.raw_dtype.includes("float");
     const topStats = col.stats || {};
     
@@ -99,7 +147,7 @@ export const RightPanel: React.FC = () => {
               Statistical Summary
             </h3>
             <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-              {Object.entries(topStats).map(([key, val]: [string, any]) => (
+              {Object.entries(topStats).map(([key, val]) => (
                 <div key={key} className="flex justify-between border-b border-zinc-800/60 pb-1.5">
                   <span className="text-zinc-500 capitalize">{key.replace("_", " ")}</span>
                   <span className="text-zinc-300 font-semibold">
@@ -147,7 +195,8 @@ export const RightPanel: React.FC = () => {
   // ----------------------------------------------------
   // Discovery detailed Scientific Argument
   // ----------------------------------------------------
-  const renderDiscoveryPanel = (finding: any) => {
+  const renderDiscoveryPanel = (value: unknown) => {
+    const finding = value as FindingDetails;
     // Generate charts based on finding structure
     const renderDiscoveryChart = () => {
       const ev = finding.evidence || {};
@@ -160,7 +209,7 @@ export const RightPanel: React.FC = () => {
         const count = 50;
         
         // Generate mock points based on correlation value
-        const dataPoints = Array.from({ length: count }, (_, idx) => {
+        const dataPoints = Array.from({ length: count }, () => {
           const x = Math.random() * 100;
           // y = r * x + noise
           const noise = (Math.random() - 0.5) * 40 * (1 - Math.abs(rVal));
@@ -187,10 +236,7 @@ export const RightPanel: React.FC = () => {
 
       if (finding.finding_type === "group_difference") {
         const means = ev.group_means || {};
-        const colCategory = finding.columns[0];
-        const colNumeric = finding.columns[1];
-        
-        const chartData = Object.entries(means).map(([cat, meanVal]: [string, any]) => ({
+        const chartData = Object.entries(means).map(([cat, meanVal]) => ({
           category: cat,
           mean: meanVal,
         }));
@@ -300,7 +346,7 @@ export const RightPanel: React.FC = () => {
               </div>
               <div className="flex justify-between text-mono border-t border-zinc-800/50 pt-2">
                 <span className="text-zinc-500">Effect Size magnitude</span>
-                <span className="text-zinc-200 font-medium">Moderate (Cohen's d = 0.38)</span>
+                <span className="text-zinc-200 font-medium">Moderate effect (d = 0.38)</span>
               </div>
             </div>
           </div>
@@ -331,7 +377,7 @@ export const RightPanel: React.FC = () => {
                 <span>Next Investigation Question</span>
               </h4>
               <p className="text-xs text-zinc-400 leading-relaxed font-serif">
-                "{finding.suggested_next_step}"
+                &quot;{finding.suggested_next_step}&quot;
               </p>
             </div>
           )}
@@ -343,8 +389,8 @@ export const RightPanel: React.FC = () => {
   // ----------------------------------------------------
   // Transform Preview (Before vs After)
   // ----------------------------------------------------
-  const renderTransformPanel = (rec: any) => {
-    const colName = rec.columns[0];
+  const renderTransformPanel = (value: unknown) => {
+    const rec = value as TransformDetails;
     
     // Mock before vs after data (e.g. log transform of right-skewed data)
     const beforeData = [
@@ -424,7 +470,7 @@ export const RightPanel: React.FC = () => {
                 Python Implementation
               </h3>
               <button
-                onClick={() => handleCopyCode(rec.code_snippet)}
+                onClick={() => handleCopyCode(rec.code_snippet ?? "")}
                 className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 font-mono transition"
               >
                 {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -443,7 +489,8 @@ export const RightPanel: React.FC = () => {
   // ----------------------------------------------------
   // local Explainability SHAP waterfall
   // ----------------------------------------------------
-  const renderShapPanel = (shap: any) => {
+  const renderShapPanel = (value: unknown) => {
+    const shap = value as ShapDetails;
     // Real Shapley values from Engine 8 (approximated by coalition sampling).
     const contributions = shap.contributions || [];
     // Classification exposes a probability; regression does not. This decides
@@ -455,10 +502,10 @@ export const RightPanel: React.FC = () => {
         : `${effect >= 0 ? "+" : ""}${effect.toFixed(3)}`;
 
     // Map contributions to chart data
-    const chartData = contributions.map((c: any) => ({
-      feature: c.feature,
-      effect: c.effect,
-      fill: c.effect >= 0 ? "#10b981" : "#ef4444", // green pushes prediction up, red pulls it down
+    const chartData = contributions.map((contribution) => ({
+      feature: contribution.feature,
+      effect: contribution.effect,
+      fill: contribution.effect >= 0 ? "#10b981" : "#ef4444", // green pushes prediction up, red pulls it down
     }));
 
     return (
@@ -509,7 +556,7 @@ export const RightPanel: React.FC = () => {
                 <YAxis dataKey="feature" type="category" stroke="#71717a" fontSize={8} />
                 <RechartsTooltip />
                 <Bar dataKey="effect" radius={[0, 2, 2, 0]}>
-                  {chartData.map((entry: any, index: number) => (
+                  {chartData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.fill} />
                   ))}
                 </Bar>
@@ -524,7 +571,7 @@ export const RightPanel: React.FC = () => {
             Key Factor Breakdown
           </h3>
           <div className="space-y-1.5 text-xs">
-            {contributions.map((c: any, idx: number) => {
+            {contributions.map((c, idx) => {
               const isIncrease = c.effect >= 0;
               return (
                 <div key={idx} className="flex justify-between items-center p-2 bg-zinc-900/60 rounded">
