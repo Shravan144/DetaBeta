@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Loader2, BrainCircuit, ListFilter, HelpCircle, AlertTriangle, User } from "lucide-react";
+import { Loader2, BrainCircuit } from "lucide-react";
 import {
   BarChart,
   Bar,
@@ -16,7 +16,39 @@ import {
 // ----------------------------------------------------
 // Real cross-validated confusion matrix (binary + multiclass)
 // ----------------------------------------------------
-const ConfusionMatrixPanel: React.FC<{ confusion: any }> = ({ confusion }) => {
+type ConfusionMatrix = {
+  accuracy: number;
+  is_binary: boolean;
+  positive_label?: unknown;
+  n_samples: number;
+  true_negative?: number;
+  false_positive?: number;
+  false_negative?: number;
+  true_positive?: number;
+  labels?: unknown[];
+  matrix?: number[][];
+};
+
+type FeatureImportance = { feature: string; importance: number; share: number };
+
+type FeatureContribution = { feature: string; effect: number; value: unknown };
+
+type PredictionExplanation = {
+  row_index: number;
+  predicted_label: unknown;
+  predicted_probability?: number;
+  baseline_prediction: number;
+  contributions: FeatureContribution[];
+};
+
+type ExplainabilityReport = {
+  model_name: string;
+  global_importances: FeatureImportance[];
+  examples: PredictionExplanation[];
+  confusion?: ConfusionMatrix | null;
+};
+
+const ConfusionMatrixPanel: React.FC<{ confusion: ConfusionMatrix | null | undefined }> = ({ confusion }) => {
   if (!confusion) {
     return (
       <div className="text-[11px] text-zinc-500 text-center py-8 border border-dashed border-zinc-800 rounded">
@@ -30,7 +62,12 @@ const ConfusionMatrixPanel: React.FC<{ confusion: any }> = ({ confusion }) => {
 
   // Binary: the familiar TN / FP / FN / TP quadrants with real counts.
   if (confusion.is_binary) {
-    const { true_negative: tn, false_positive: fp, false_negative: fn, true_positive: tp } = confusion;
+    const {
+      true_negative: tn = 0,
+      false_positive: fp = 0,
+      false_negative: fn = 0,
+      true_positive: tp = 0,
+    } = confusion;
     const cell = (label: string, value: number, sub: string, good: boolean) => (
       <div className="p-4 bg-zinc-950/60 rounded border border-zinc-900 flex flex-col justify-center">
         <span className="text-[10px] text-zinc-500 uppercase">{label}</span>
@@ -54,7 +91,7 @@ const ConfusionMatrixPanel: React.FC<{ confusion: any }> = ({ confusion }) => {
   }
 
   // Multiclass: full labels x labels grid, diagonal (correct) highlighted.
-  const labels: any[] = confusion.labels || [];
+  const labels = confusion.labels ?? [];
   const matrix: number[][] = confusion.matrix || [];
   return (
     <div className="space-y-3">
@@ -103,26 +140,24 @@ export const ExplainabilityView: React.FC = () => {
   const [columns, setColumns] = useState<string[]>([]);
   const [target, setTarget] = useState("");
   const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState<any>(null);
+  const [report, setReport] = useState<ExplainabilityReport | null>(null);
   
   // Local prediction selection
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
 
   // Load columns to set default target
   useEffect(() => {
-    if (selectedDatasetId) {
-      loadColumnsAndExplain();
-    }
-  }, [selectedDatasetId]);
+    if (!selectedDatasetId) return;
 
-  const loadColumnsAndExplain = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
-      if (res.ok) {
-        const preview = await res.json();
-        const cols: string[] = preview.columns || [];
-        setColumns(cols);
+    let cancelled = false;
+    async function loadColumnsAndExplain() {
+      setLoading(true);
+      try {
+        const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
+        if (res.ok && !cancelled) {
+          const preview = await res.json() as { columns?: string[] };
+          const cols = preview.columns ?? [];
+          setColumns(cols);
 
         // Pick a sensible default target: a column that looks like a label/
         // outcome, otherwise fall back to the last column. No dataset-specific
@@ -136,18 +171,24 @@ export const ExplainabilityView: React.FC = () => {
           setTarget(defaultTgt);
           // Run explain engine
           const data = await runAnalysis("explain", defaultTgt);
-          setReport(data);
-          if (data?.examples && data.examples.length > 0) {
-            setSelectedRowIndex(data.examples[0].row_index);
+          const explainability = data as unknown as ExplainabilityReport;
+          setReport(explainability);
+          const examples = explainability.examples;
+          if (examples && examples.length > 0) {
+            setSelectedRowIndex(examples[0].row_index);
           }
         }
+        }
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
     }
-  };
+
+    void loadColumnsAndExplain();
+    return () => { cancelled = true; };
+  }, [apiBase, runAnalysis, selectedDatasetId]);
 
   const handleTargetChange = async (newTarget: string) => {
     setTarget(newTarget);
@@ -158,9 +199,11 @@ export const ExplainabilityView: React.FC = () => {
     setLoading(true);
     try {
       const data = await runAnalysis("explain", newTarget);
-      setReport(data);
-      if (data?.examples && data.examples.length > 0) {
-        setSelectedRowIndex(data.examples[0].row_index);
+      const explainability = data as unknown as ExplainabilityReport;
+      setReport(explainability);
+      const examples = explainability.examples;
+      if (examples && examples.length > 0) {
+        setSelectedRowIndex(examples[0].row_index);
       }
     } catch (e) {
       console.error(e);
@@ -179,14 +222,14 @@ export const ExplainabilityView: React.FC = () => {
   }
 
   // Global feature importances chart data
-  const globalData = (report?.global_importances || []).map((imp: any) => ({
+  const globalData = (report?.global_importances ?? []).map((imp) => ({
     name: imp.feature,
     importance: imp.importance,
     percentage: (imp.share * 100).toFixed(0) + "%",
-  })).sort((a: any, b: any) => b.importance - a.importance);
+  })).sort((a, b) => b.importance - a.importance);
 
   // Selected row explanation details
-  const activeExplanation = (report?.examples || []).find((ex: any) => ex.row_index === selectedRowIndex);
+  const activeExplanation = (report?.examples ?? []).find((example) => example.row_index === selectedRowIndex);
 
   return (
     <div className="space-y-6 py-4">
@@ -297,7 +340,7 @@ export const ExplainabilityView: React.FC = () => {
                   onChange={(e) => setSelectedRowIndex(Number(e.target.value))}
                   className="bg-zinc-950 border border-zinc-850 rounded px-2.5 py-1 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer font-mono"
                 >
-                  {report.examples?.map((ex: any) => (
+                  {report.examples.map((ex) => (
                     <option key={ex.row_index} value={ex.row_index}>
                       Row #{ex.row_index} → {target}: {String(ex.predicted_label)}
                     </option>

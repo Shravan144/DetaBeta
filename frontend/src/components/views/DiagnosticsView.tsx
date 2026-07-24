@@ -2,30 +2,48 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Activity, AlertTriangle, CheckCircle, Info, Loader2, Play } from "lucide-react";
+import { CheckCircle, Loader2 } from "lucide-react";
+
+type HealthIssue = {
+  severity: string;
+  category: string;
+  title: string;
+  column?: string;
+  reasoning?: string[];
+  evidence?: Record<string, unknown>;
+  recommendation?: string;
+};
+
+type HealthReport = {
+  score: number;
+  grade: string;
+  issues: HealthIssue[];
+};
 
 export const DiagnosticsView: React.FC = () => {
   const { selectedDatasetId, runAnalysis, openRightPanel } = useWorkspace();
-  const [report, setReport] = useState<any>(null);
+  const [report, setReport] = useState<HealthReport | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (selectedDatasetId) {
-      loadHealthReport();
-    }
-  }, [selectedDatasetId]);
+    if (!selectedDatasetId) return;
 
-  const loadHealthReport = async () => {
-    setLoading(true);
-    try {
-      const data = await runAnalysis("health");
-      setReport(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
+    let cancelled = false;
+    async function loadHealthReport() {
+      setLoading(true);
+      try {
+        const data = await runAnalysis("health");
+        if (!cancelled) setReport(data as HealthReport);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  };
+
+    void loadHealthReport();
+    return () => { cancelled = true; };
+  }, [runAnalysis, selectedDatasetId]);
 
   if (loading) {
     return (
@@ -60,7 +78,7 @@ export const DiagnosticsView: React.FC = () => {
       critical: 25,
     };
 
-    (report.issues || []).forEach((issue: any) => {
+    report.issues.forEach((issue) => {
       const penalty = penaltyMap[issue.severity] || 2;
       switch (issue.category) {
         case "missing_values":
@@ -94,7 +112,7 @@ export const DiagnosticsView: React.FC = () => {
   };
 
   const breakdown = calculateBreakdown();
-  const issuesList = report.issues || [];
+  const issuesList = report.issues;
 
   const getSeverityBadgeClass = (severity: string) => {
     switch (severity) {
@@ -194,7 +212,7 @@ export const DiagnosticsView: React.FC = () => {
 
         {issuesList.length > 0 ? (
           <div className="space-y-4">
-            {issuesList.map((issue: any, idx: number) => (
+            {issuesList.map((issue, idx) => (
               <div
                 key={idx}
                 className="bg-[#18181b]/40 border border-zinc-800 rounded-lg overflow-hidden"
@@ -246,7 +264,7 @@ export const DiagnosticsView: React.FC = () => {
                           Evidence
                         </div>
                         <p className="text-zinc-300 font-mono">
-                          {Object.entries(issue.evidence || {}).map(([k, v]: any) => `${k}: ${v}`).join(" · ") || "Statistical flags triggered."}
+                          {Object.entries(issue.evidence || {}).map(([key, value]) => `${key}: ${String(value)}`).join(" · ") || "Statistical flags triggered."}
                         </p>
                       </div>
                       <div>

@@ -26,12 +26,10 @@ import {
   BrainCircuit,
   Sparkles,
   ArrowRight,
-  Database,
-  FileText,
 } from "lucide-react";
 
 export default function Home() {
-  const { activeTab, setActiveTab, toast, selectedProjectId, createProject, uploadDataset, selectProject } = useWorkspace();
+  const { activeTab, setActiveTab, toast, selectedProjectId, createProject, selectProject } = useWorkspace();
 
   const handleStartInvestigation = () => {
     if (selectedProjectId) {
@@ -91,7 +89,7 @@ export default function Home() {
             <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-zinc-100 max-w-2xl mx-auto leading-[1.15]">
               Understand your data. <br className="hidden sm:inline" />
               <span className="bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-500 bg-clip-text text-transparent">
-                Don't just process it.
+                Don&apos;t just process it.
               </span>
             </h1>
             <p className="text-xs sm:text-sm text-zinc-400 max-w-xl mx-auto leading-relaxed font-serif">
@@ -180,7 +178,7 @@ export default function Home() {
       case "report":
         return <ReportsView />;
       default:
-        return <div className="text-zinc-500 font-mono text-xs">View "{activeTab}" is not registered.</div>;
+        return <div className="text-zinc-500 font-mono text-xs">{`View "${activeTab}" is not registered.`}</div>;
     }
   };
 

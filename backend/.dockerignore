@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+storage/
+tests/
+sample_data/
+*.db
+*.sqlite
+*.sqlite3

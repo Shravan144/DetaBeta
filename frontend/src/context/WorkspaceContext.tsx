@@ -32,10 +32,12 @@ export interface Dataset {
   created_at: string;
 }
 
+export type AnalysisResult = Record<string, unknown>;
+
 export interface RightPanelState {
   isOpen: boolean;
   type: "column" | "discovery" | "transform" | "SHAP" | null;
-  data: any;
+  data: unknown;
 }
 
 export interface ToastState {
@@ -70,7 +72,7 @@ interface WorkspaceContextProps {
   activeTab: TabName;
   setActiveTab: (tab: TabName) => void;
   rightPanel: RightPanelState;
-  openRightPanel: (type: RightPanelState["type"], data: any) => void;
+  openRightPanel: (type: RightPanelState["type"], data: unknown) => void;
   closeRightPanel: () => void;
   toast: ToastState;
   showToast: (message: string, type?: "success" | "error") => void;
@@ -91,10 +93,10 @@ interface WorkspaceContextProps {
     engineKey: string,
     target?: string,
     opts?: { refresh?: boolean }
-  ) => Promise<any>;
+  ) => Promise<AnalysisResult>;
   applyTransform: (
     datasetId: number,
-    payload: { transform: string; columns: string[]; evidence?: any; title?: string }
+    payload: { transform: string; columns: string[]; evidence?: Record<string, unknown>; title?: string }
   ) => Promise<ApplyTransformResult>;
 }
 
@@ -108,7 +110,11 @@ export interface ApplyTransformResult {
 const WorkspaceContext = createContext<WorkspaceContextProps | undefined>(undefined);
 
 export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [apiBase, setApiBaseState] = useState<string>("/api");
+  const [apiBase, setApiBaseState] = useState<string>(() => {
+    if (typeof window === "undefined") return "/api";
+    const saved = window.localStorage.getItem("detabetaApiBase");
+    return saved && saved !== "http://127.0.0.1:8000/api" ? saved : "/api";
+  });
   const [projects, setProjects] = useState<Project[]>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
@@ -140,27 +146,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // `${datasetId}:${target}:${engineKey}`. This skips redundant network calls
   // when switching between tabs; the backend also caches, so this is purely a
   // client-side speed-up. Cleared whenever the selected dataset changes.
-  const resultsCacheRef = React.useRef<Map<string, any>>(new Map());
-
-  // Initialize API Base and load initial projects
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const saved = window.localStorage.getItem("detabetaApiBase");
-      if (saved && saved !== "http://127.0.0.1:8000/api") {
-        setApiBaseState(saved);
-      } else {
-        setApiBaseState("/api");
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (apiBase) {
-      loadProjects().catch((err) => {
-        console.error("Failed to load initial projects:", err);
-      });
-    }
-  }, [apiBase]);
+  const resultsCacheRef = React.useRef<Map<string, AnalysisResult>>(new Map());
 
   const setApiBase = (url: string) => {
     setApiBaseState(url);
@@ -176,7 +162,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }, 3000);
   };
 
-  const openRightPanel = (type: RightPanelState["type"], data: any) => {
+  const openRightPanel = (type: RightPanelState["type"], data: unknown) => {
     setRightPanel({ isOpen: true, type, data });
   };
 
@@ -185,7 +171,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // Helper fetch function
-  const apiFetch = async (path: string, options: RequestInit = {}) => {
+  const apiFetch = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
     const headers = options.body instanceof FormData 
       ? {} 
       : { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -199,7 +185,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       });
 
       const contentType = response.headers.get("content-type") || "";
-      let data;
+      let data: unknown;
       if (contentType.includes("application/json")) {
         data = await response.json();
       } else {
@@ -207,13 +193,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
 
       if (!response.ok) {
-        const errorDetail = data?.detail || data?.message || response.statusText || "Request failed";
+        const errorData = typeof data === "object" && data !== null ? data as Record<string, unknown> : {};
+        const errorDetail = errorData.detail || errorData.message || response.statusText || "Request failed";
         throw new Error(typeof errorDetail === "string" ? errorDetail : JSON.stringify(errorDetail));
       }
 
-      return data;
-    } catch (error: any) {
-      showToast(error.message || "Network error occurred", "error");
+      return data as T;
+    } catch (error: unknown) {
+      showToast(error instanceof Error ? error.message : "Network error occurred", "error");
       throw error;
     }
   };
@@ -221,7 +208,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Like apiFetch, but also returns response headers so callers can read the
   // cache metadata (X-DetaBeta-Cached / X-DetaBeta-Session-Id) the analysis
   // endpoints attach.
-  const apiFetchWithHeaders = async (path: string, options: RequestInit = {}) => {
+  const apiFetchWithHeaders = async <T,>(path: string, options: RequestInit = {}) => {
     const headers = options.body instanceof FormData
       ? {}
       : { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -229,23 +216,24 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       const response = await fetch(url, { ...options, headers });
       const contentType = response.headers.get("content-type") || "";
-      const data = contentType.includes("application/json")
+      const data: unknown = contentType.includes("application/json")
         ? await response.json()
         : await response.text();
       if (!response.ok) {
-        const errorDetail = data?.detail || data?.message || response.statusText || "Request failed";
+        const errorData = typeof data === "object" && data !== null ? data as Record<string, unknown> : {};
+        const errorDetail = errorData.detail || errorData.message || response.statusText || "Request failed";
         throw new Error(typeof errorDetail === "string" ? errorDetail : JSON.stringify(errorDetail));
       }
-      return { data, headers: response.headers };
-    } catch (error: any) {
-      showToast(error.message || "Network error occurred", "error");
+      return { data: data as T, headers: response.headers };
+    } catch (error: unknown) {
+      showToast(error instanceof Error ? error.message : "Network error occurred", "error");
       throw error;
     }
   };
 
   const loadProjects = async () => {
     try {
-      const data = await apiFetch("/projects");
+      const data = await apiFetch<Project[]>("/projects");
       setProjects(data);
     } catch (e) {
       console.error(e);
@@ -254,7 +242,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const loadDatasets = async (projectId: number) => {
     try {
-      const data = await apiFetch(`/projects/${projectId}/datasets`);
+      const data = await apiFetch<Dataset[]>(`/projects/${projectId}/datasets`);
       setDatasets(data);
     } catch (e) {
       console.error(e);
@@ -298,7 +286,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const createProject = async (name: string, description: string) => {
     try {
-      const newProj = await apiFetch("/projects", {
+      const newProj = await apiFetch<Project>("/projects", {
         method: "POST",
         body: JSON.stringify({ name, description }),
       });
@@ -316,7 +304,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     formData.append("file", file);
     
     try {
-      const newDs = await apiFetch(`/projects/${selectedProjectId}/datasets`, {
+      const newDs = await apiFetch<Dataset>(`/projects/${selectedProjectId}/datasets`, {
         method: "POST",
         body: formData,
       });
@@ -374,9 +362,10 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const cacheKey = `${selectedDatasetId}:${target || ""}:${engineKey}`;
 
     // Serve from the client-side cache within a visit unless a refresh is asked.
-    if (!refresh && resultsCacheRef.current.has(cacheKey)) {
+    const cachedResult = !refresh ? resultsCacheRef.current.get(cacheKey) : undefined;
+    if (cachedResult !== undefined) {
       setSession((prev) => ({ ...prev, status: "completed", cached: true }));
-      return resultsCacheRef.current.get(cacheKey);
+      return cachedResult;
     }
 
     setSession((prev) => ({ ...prev, status: "running", cached: false }));
@@ -387,7 +376,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const query = params.toString() ? `?${params.toString()}` : "";
 
     try {
-      const { data, headers } = await apiFetchWithHeaders(
+      const { data, headers } = await apiFetchWithHeaders<AnalysisResult>(
         `/datasets/${selectedDatasetId}/analysis/${engineKey}${query}`
       );
       const cached = headers.get("X-DetaBeta-Cached") === "true";
@@ -405,9 +394,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const applyTransform = async (
     datasetId: number,
-    payload: { transform: string; columns: string[]; evidence?: any; title?: string }
+    payload: { transform: string; columns: string[]; evidence?: Record<string, unknown>; title?: string }
   ): Promise<ApplyTransformResult> => {
-    const result = await apiFetch(`/datasets/${datasetId}/apply-transform`, {
+    const result = await apiFetch<ApplyTransformResult>(`/datasets/${datasetId}/apply-transform`, {
       method: "POST",
       body: JSON.stringify({
         transform: payload.transform,
@@ -422,14 +411,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       await loadDatasets(selectedProjectId);
       await loadProjects();
     }
-    return result as ApplyTransformResult;
+    return result;
   };
 
   const loadSessions = async (target?: string) => {
     if (!selectedDatasetId) return;
     const query = target ? `?target=${encodeURIComponent(target)}` : "";
     try {
-      const data = await apiFetch(`/datasets/${selectedDatasetId}/sessions${query}`);
+      const data = await apiFetch<SessionSummary[]>(`/datasets/${selectedDatasetId}/sessions${query}`);
       setSessions(data);
     } catch (e) {
       console.error(e);
@@ -454,6 +443,24 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       throw e;
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInitialProjects() {
+      try {
+        const response = await fetch(`${apiBase.replace(/\/$/, "")}/projects`);
+        if (!response.ok) throw new Error(response.statusText || "Failed to load projects");
+        const data = await response.json() as Project[];
+        if (!cancelled) setProjects(data);
+      } catch (error: unknown) {
+        console.error("Failed to load initial projects:", error);
+      }
+    }
+
+    void loadInitialProjects();
+    return () => { cancelled = true; };
+  }, [apiBase]);
 
   return (
     <WorkspaceContext.Provider

@@ -2,33 +2,46 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Search, Info, Loader2, ArrowRight, Star } from "lucide-react";
+import { Loader2, ArrowRight, Star } from "lucide-react";
+
+type Finding = {
+  strength: string;
+  finding_type: string;
+  title: string;
+  [key: string]: unknown;
+};
+
+type InvestigationReport = {
+  findings: Finding[];
+};
 
 export const InvestigationView: React.FC = () => {
   const { selectedDatasetId, runAnalysis, openRightPanel } = useWorkspace();
-  const [report, setReport] = useState<any>(null);
+  const [report, setReport] = useState<InvestigationReport | null>(null);
   const [loading, setLoading] = useState(false);
   
   // Filter tabs
   const [activeFilter, setActiveFilter] = useState("all");
 
   useEffect(() => {
-    if (selectedDatasetId) {
-      loadInvestigationReport();
-    }
-  }, [selectedDatasetId]);
+    if (!selectedDatasetId) return;
 
-  const loadInvestigationReport = async () => {
-    setLoading(true);
-    try {
-      const data = await runAnalysis("investigate");
-      setReport(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
+    let cancelled = false;
+    async function loadInvestigationReport() {
+      setLoading(true);
+      try {
+        const data = await runAnalysis("investigate");
+        if (!cancelled) setReport(data as InvestigationReport);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  };
+
+    void loadInvestigationReport();
+    return () => { cancelled = true; };
+  }, [runAnalysis, selectedDatasetId]);
 
   if (loading) {
     return (
@@ -47,7 +60,7 @@ export const InvestigationView: React.FC = () => {
     );
   }
 
-  const findings: any[] = report.findings || [];
+  const findings = report.findings;
 
   // Summary counts
   const highConfCount = findings.filter((f) => f.strength === "very_strong" || f.strength === "strong").length;
@@ -153,7 +166,7 @@ export const InvestigationView: React.FC = () => {
       {/* Grid of Discovery Cards */}
       {filteredFindings.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {filteredFindings.map((finding: any, idx: number) => {
+          {filteredFindings.map((finding, idx) => {
             const isStrong = finding.strength === "very_strong" || finding.strength === "strong";
             
             return (

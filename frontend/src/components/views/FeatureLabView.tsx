@@ -2,33 +2,49 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Sliders, CheckCircle, Info, Loader2, Sparkles, AlertTriangle, ArrowRight } from "lucide-react";
+import { Info, Loader2, AlertTriangle } from "lucide-react";
+
+type FeatureRecommendation = {
+  transform: string;
+  columns: string[];
+  evidence?: Record<string, unknown>;
+  title?: string;
+  priority: string;
+  reasoning?: string[];
+  warnings?: string[];
+};
+
+type FeatureLabReport = {
+  recommendations: FeatureRecommendation[];
+};
 
 export const FeatureLabView: React.FC = () => {
   const { selectedDatasetId, runAnalysis, openRightPanel, applyTransform, showToast } = useWorkspace();
-  const [report, setReport] = useState<any>(null);
+  const [report, setReport] = useState<FeatureLabReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [applyingIdx, setApplyingIdx] = useState<number | null>(null);
 
   useEffect(() => {
-    if (selectedDatasetId) {
-      loadFeatureRecommendations();
-    }
-  }, [selectedDatasetId]);
+    if (!selectedDatasetId) return;
 
-  const loadFeatureRecommendations = async () => {
-    setLoading(true);
-    try {
-      const data = await runAnalysis("feature-lab");
-      setReport(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
+    let cancelled = false;
+    async function loadFeatureRecommendations() {
+      setLoading(true);
+      try {
+        const data = await runAnalysis("feature-lab");
+        if (!cancelled) setReport(data as FeatureLabReport);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  };
 
-  const handleApplyTransform = async (rec: any, idx: number) => {
+    void loadFeatureRecommendations();
+    return () => { cancelled = true; };
+  }, [runAnalysis, selectedDatasetId]);
+
+  const handleApplyTransform = async (rec: FeatureRecommendation, idx: number) => {
     if (!selectedDatasetId) return;
     setApplyingIdx(idx);
     try {
@@ -71,7 +87,7 @@ export const FeatureLabView: React.FC = () => {
     );
   }
 
-  const recommendations: any[] = report.recommendations || [];
+  const recommendations = report.recommendations;
 
   const getPriorityBadgeClass = (priority: string) => {
     switch (priority) {
@@ -105,7 +121,7 @@ export const FeatureLabView: React.FC = () => {
       {/* Recommendations Cards list */}
       <div className="space-y-4">
         {recommendations.length > 0 ? (
-          recommendations.map((rec: any, idx: number) => {
+          recommendations.map((rec, idx) => {
             const isApplying = applyingIdx === idx;
             
             return (

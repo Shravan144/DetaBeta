@@ -2,13 +2,31 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Search, Loader2, Sparkles, Filter, Info } from "lucide-react";
+import { Search, Loader2, Info } from "lucide-react";
+
+type DatasetRow = Record<string, unknown>;
+
+type DatasetPreview = {
+  n_rows: number;
+  n_columns: number;
+  columns: string[];
+  rows: DatasetRow[];
+};
+
+type ColumnProfile = {
+  name: string;
+  [key: string]: unknown;
+};
+
+type DatasetProfile = {
+  columns: ColumnProfile[];
+};
 
 export const DatasetView: React.FC = () => {
   const { selectedDatasetId, apiBase, runAnalysis, openRightPanel } = useWorkspace();
   
-  const [preview, setPreview] = useState<any>(null);
-  const [profile, setProfile] = useState<any>(null);
+  const [preview, setPreview] = useState<DatasetPreview | null>(null);
+  const [profile, setProfile] = useState<DatasetProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchCol, setActiveSearchCol] = useState("");
@@ -18,34 +36,32 @@ export const DatasetView: React.FC = () => {
   });
 
   useEffect(() => {
-    if (selectedDatasetId) {
-      loadPreviewAndProfile();
-    }
-  }, [selectedDatasetId]);
+    if (!selectedDatasetId) return;
 
-  const loadPreviewAndProfile = async () => {
-    setLoading(true);
-    try {
-      // 1. Fetch preview
-      const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
-      if (res.ok) {
-        const previewData = await res.json();
-        setPreview(previewData);
+    let cancelled = false;
+    async function loadPreviewAndProfile() {
+      setLoading(true);
+      try {
+        const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
+        if (res.ok && !cancelled) {
+          setPreview((await res.json()) as DatasetPreview);
+        }
+        const profileData = await runAnalysis("understand");
+        if (!cancelled) setProfile(profileData as DatasetProfile);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      
-      // 2. Fetch understanding profile for columns metadata
-      const profileData = await runAnalysis("understand");
-      setProfile(profileData);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
     }
-  };
+
+    void loadPreviewAndProfile();
+    return () => { cancelled = true; };
+  }, [apiBase, runAnalysis, selectedDatasetId]);
 
   const handleHeaderClick = (colName: string) => {
     if (!profile?.columns) return;
-    const colProfile = profile.columns.find((c: any) => c.name === colName);
+    const colProfile = profile.columns.find((column) => column.name === colName);
     if (colProfile) {
       openRightPanel("column", colProfile);
     }
@@ -82,7 +98,7 @@ export const DatasetView: React.FC = () => {
   let filteredRows = [...(preview.rows || [])];
 
   if (searchQuery.trim() && activeSearchCol) {
-    filteredRows = filteredRows.filter((row: any) => {
+    filteredRows = filteredRows.filter((row) => {
       const val = row[activeSearchCol];
       return String(val ?? "").toLowerCase().includes(searchQuery.toLowerCase());
     });
@@ -90,7 +106,7 @@ export const DatasetView: React.FC = () => {
 
   if (sortConfig.key && sortConfig.direction) {
     const { key, direction } = sortConfig;
-    filteredRows.sort((a: any, b: any) => {
+    filteredRows.sort((a, b) => {
       const valA = a[key];
       const valB = b[key];
       if (typeof valA === "number" && typeof valB === "number") {
@@ -183,7 +199,7 @@ export const DatasetView: React.FC = () => {
             </thead>
             <tbody>
               {filteredRows.length > 0 ? (
-                filteredRows.map((row: any, rowIdx: number) => (
+                filteredRows.map((row, rowIdx) => (
                   <tr key={rowIdx} className="border-b border-zinc-850">
                     {preview.columns.map((colName: string) => {
                       const value = row[colName];

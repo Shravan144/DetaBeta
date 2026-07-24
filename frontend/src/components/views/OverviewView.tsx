@@ -1,21 +1,36 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import {
   Upload,
   FileSpreadsheet,
   CheckCircle,
-  HelpCircle,
-  TrendingUp,
-  Cpu,
   ArrowRight,
   Loader2,
-  Sparkles,
   History,
   RefreshCw,
   Zap,
 } from "lucide-react";
+
+type DatasetProfile = {
+  n_rows?: number;
+  n_cols?: number;
+  n_duplicate_rows?: number;
+  observations?: string[];
+};
+
+type Discovery = {
+  strength: string;
+  title: string;
+  [key: string]: unknown;
+};
+
+type OverviewAnalysis = {
+  profile: DatasetProfile;
+  healthScore: number;
+  discoveries: Discovery[];
+};
 
 export const OverviewView: React.FC = () => {
   const {
@@ -24,7 +39,6 @@ export const OverviewView: React.FC = () => {
     datasets,
     uploadDataset,
     runAnalysis,
-    setActiveTab,
     openRightPanel,
     session,
     sessions,
@@ -38,52 +52,50 @@ export const OverviewView: React.FC = () => {
   const [rerunning, setRerunning] = useState(false);
 
   // Analysis states
-  const [profile, setProfile] = useState<any>(null);
-  const [discoveries, setDiscoveries] = useState<any[]>([]);
+  const [profile, setProfile] = useState<DatasetProfile | null>(null);
+  const [discoveries, setDiscoveries] = useState<Discovery[]>([]);
   const [healthScore, setHealthScore] = useState<number | null>(null);
-  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
 
-  // Load analysis reports
+  const fetchOverviewAnalysis = useCallback(async (): Promise<OverviewAnalysis> => {
+    const profileData = await runAnalysis("understand");
+    const healthData = await runAnalysis("health");
+    const investigationData = await runAnalysis("investigate");
+    await loadSessions();
+    return {
+      profile: profileData as DatasetProfile,
+      healthScore: (healthData as { score?: number }).score ?? 100,
+      discoveries: (investigationData as { findings?: Discovery[] }).findings ?? [],
+    };
+  }, [loadSessions, runAnalysis]);
+
+  // Load the reports for the active dataset and refresh when it changes.
   useEffect(() => {
-    if (selectedDatasetId) {
-      loadOverviewAnalysis();
-    } else {
-      setProfile(null);
-      setDiscoveries([]);
-      setHealthScore(null);
-    }
-  }, [selectedDatasetId]);
+    if (!selectedDatasetId) return;
+    let cancelled = false;
+    void fetchOverviewAnalysis()
+      .then((analysis) => {
+        if (cancelled) return;
+        setProfile(analysis.profile);
+        setHealthScore(analysis.healthScore);
+        setDiscoveries(analysis.discoveries);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) console.error("Failed to load overview reports:", error);
+      });
+    return () => { cancelled = true; };
+  }, [fetchOverviewAnalysis, selectedDatasetId]);
 
-  const loadOverviewAnalysis = async () => {
-    setLoadingAnalysis(true);
-    try {
-      // Run understand engine
-      const profileData = await runAnalysis("understand");
-      setProfile(profileData);
-
-      // Run health engine for health score
-      const healthData = await runAnalysis("health");
-      setHealthScore(healthData?.score || 100);
-
-      // Run investigate engine
-      const investData = await runAnalysis("investigate");
-      setDiscoveries(investData?.findings || []);
-
-      // Refresh the analysis-session history for this dataset.
-      await loadSessions();
-    } catch (e) {
-      console.error("Failed to load overview reports:", e);
-    } finally {
-      setLoadingAnalysis(false);
-    }
-  };
+  const loadingAnalysis = Boolean(selectedDatasetId && profile === null);
 
   const handleRerun = async () => {
     setRerunning(true);
     try {
       // Start a fresh session version, then recompute the overview engines.
       await rerunSession();
-      await loadOverviewAnalysis();
+      const analysis = await fetchOverviewAnalysis();
+      setProfile(analysis.profile);
+      setHealthScore(analysis.healthScore);
+      setDiscoveries(analysis.discoveries);
     } catch (e) {
       console.error("Failed to re-run analysis:", e);
     } finally {

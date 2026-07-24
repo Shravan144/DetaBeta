@@ -4,46 +4,63 @@ import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { Loader2, FileDown, FileText, FileCode, BookOpen } from "lucide-react";
 
+type ReportSection = {
+  key: string;
+  title: string;
+  headline: string;
+  body?: string[];
+  key_points?: string[];
+};
+
+type ResearchReport = {
+  title?: string;
+  dataset_name?: string;
+  executive_summary?: string[];
+  sections?: ReportSection[];
+  caveats?: string[];
+  next_steps?: string[];
+};
+
 export const ReportsView: React.FC = () => {
   const { selectedDatasetId, runAnalysis, apiBase, showToast } = useWorkspace();
   
   const [columns, setColumns] = useState<string[]>([]);
   const [target, setTarget] = useState("");
   const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState<any>(null);
+  const [report, setReport] = useState<ResearchReport | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
 
   // Load columns to set default target
   useEffect(() => {
-    if (selectedDatasetId) {
-      loadColumns();
-    }
-  }, [selectedDatasetId]);
+    if (!selectedDatasetId) return;
 
-  const loadColumns = async () => {
-    try {
-      const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
-      if (res.ok) {
-        const preview = await res.json();
-        setColumns(preview.columns || []);
-        // Find default target
-        const defaultTgt = (preview.columns || []).find((c: string) => 
-          c.toLowerCase() === "survived" || c.toLowerCase() === "churn"
-        );
-        if (defaultTgt) {
-          setTarget(defaultTgt);
+    let cancelled = false;
+    async function loadColumns() {
+      try {
+        const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
+        if (res.ok && !cancelled) {
+          const preview = await res.json() as { columns?: string[] };
+          const nextColumns = preview.columns ?? [];
+          setColumns(nextColumns);
+          const defaultTgt = nextColumns.find((column) =>
+            column.toLowerCase() === "survived" || column.toLowerCase() === "churn"
+          );
+          if (defaultTgt) setTarget(defaultTgt);
         }
+      } catch (error) {
+        console.error(error);
       }
-    } catch (e) {
-      console.error(e);
     }
-  };
+
+    void loadColumns();
+    return () => { cancelled = true; };
+  }, [apiBase, selectedDatasetId]);
 
   const handleGenerateReport = async () => {
     setLoading(true);
     try {
       const data = await runAnalysis("report", target || undefined);
-      setReport(data);
+      setReport(data as ResearchReport);
       showToast("Composed complete Research Report successfully.");
     } catch (e) {
       console.error(e);
@@ -224,7 +241,7 @@ export const ReportsView: React.FC = () => {
 
           {/* Chapters loop */}
           <div className="space-y-8">
-            {report.sections?.map((sec: any, idx: number) => (
+            {report.sections?.map((sec, idx) => (
               <section key={sec.key} className="space-y-3 border-t border-zinc-850/60 print:border-zinc-200 pt-6">
                 <div className="flex gap-2.5 items-center">
                   <span className="text-[10px] font-mono font-bold text-zinc-650 bg-[#0f0f11] border border-zinc-850 px-2 py-0.5 rounded print:border-zinc-300">
@@ -238,7 +255,7 @@ export const ReportsView: React.FC = () => {
                 <div className="pl-0 sm:pl-10 space-y-3">
                   {/* Takeaway headline */}
                   <blockquote className="border-l-2 border-emerald-500 pl-3 italic text-xs text-zinc-300 print:text-zinc-800">
-                    "{sec.headline}"
+                    &quot;{sec.headline}&quot;
                   </blockquote>
 
                   {/* Body description */}

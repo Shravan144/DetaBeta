@@ -2,7 +2,40 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Loader2, Sparkles, Cpu, Award, ListFilter, AlertTriangle } from "lucide-react";
+import { Loader2, Cpu, Award, ListFilter } from "lucide-react";
+
+type AlgorithmSuggestion = {
+  name: string;
+  is_baseline: boolean;
+  complexity: string;
+  pros?: string[];
+  cons?: string[];
+  sklearn_path: string;
+};
+
+type ModelResult = {
+  name: string;
+  is_baseline: boolean;
+  primary_score?: number;
+  train_seconds?: number;
+  metrics?: Record<string, number | { mean?: number }>;
+};
+
+type RecommendationReport = {
+  problem_type?: string;
+  summary?: string;
+  algorithms?: AlgorithmSuggestion[];
+};
+
+type ExperimentReport = {
+  results?: ModelResult[];
+  primary_metric?: string;
+  best_model?: string;
+  best_reasoning?: string[];
+  baseline_comparison?: string;
+};
+
+type DatasetPreview = { columns?: string[] };
 
 export const ExperimentStudioView: React.FC = () => {
   const { selectedDatasetId, runAnalysis, apiBase } = useWorkspace();
@@ -13,58 +46,63 @@ export const ExperimentStudioView: React.FC = () => {
   const [loadingRecommend, setLoadingRecommend] = useState(false);
   const [loadingExperiment, setLoadingExperiment] = useState(false);
   
-  const [recommendReport, setRecommendReport] = useState<any>(null);
-  const [experimentReport, setExperimentReport] = useState<any>(null);
+  const [recommendReport, setRecommendReport] = useState<RecommendationReport | null>(null);
+  const [experimentReport, setExperimentReport] = useState<ExperimentReport | null>(null);
 
   // Load dataset preview to get column list
   useEffect(() => {
-    if (selectedDatasetId) {
-      loadColumns();
-    }
-  }, [selectedDatasetId]);
+    if (!selectedDatasetId) return;
 
-  const loadColumns = async () => {
-    setLoadingMetadata(true);
-    try {
-      const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
-      if (res.ok) {
-        const preview = await res.json();
-        setColumns(preview.columns || []);
-        // Set default target if columns contain survived or churn
-        const defaultTgt = (preview.columns || []).find((c: string) => 
-          c.toLowerCase() === "survived" || c.toLowerCase() === "churn"
-        );
-        if (defaultTgt) {
-          setTarget(defaultTgt);
+    let cancelled = false;
+    async function loadColumns() {
+      setLoadingMetadata(true);
+      try {
+        const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
+        if (res.ok && !cancelled) {
+          const preview = await res.json() as DatasetPreview;
+          const nextColumns = preview.columns ?? [];
+          setColumns(nextColumns);
+          const defaultTgt = nextColumns.find((column) =>
+            column.toLowerCase() === "survived" || column.toLowerCase() === "churn"
+          );
+          if (defaultTgt) setTarget(defaultTgt);
         }
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (!cancelled) setLoadingMetadata(false);
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingMetadata(false);
     }
-  };
+
+    void loadColumns();
+    return () => { cancelled = true; };
+  }, [apiBase, selectedDatasetId]);
 
   // Fetch algorithm recommendations when target changes
   useEffect(() => {
-    if (selectedDatasetId && target) {
-      loadRecommendations();
-    } else {
-      setRecommendReport(null);
-      setExperimentReport(null);
-    }
-  }, [selectedDatasetId, target]);
+    if (!selectedDatasetId || !target) return;
 
-  const loadRecommendations = async () => {
-    setLoadingRecommend(true);
-    try {
-      const data = await runAnalysis("recommend", target);
-      setRecommendReport(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingRecommend(false);
+    let cancelled = false;
+    async function loadRecommendations() {
+      setLoadingRecommend(true);
+      try {
+        const data = await runAnalysis("recommend", target);
+        if (!cancelled) setRecommendReport(data as RecommendationReport);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        if (!cancelled) setLoadingRecommend(false);
+      }
     }
+
+    void loadRecommendations();
+    return () => { cancelled = true; };
+  }, [runAnalysis, selectedDatasetId, target]);
+
+  const handleTargetChange = (nextTarget: string) => {
+    setTarget(nextTarget);
+    setRecommendReport(null);
+    setExperimentReport(null);
   };
 
   const handleTrainModels = async () => {
@@ -72,7 +110,7 @@ export const ExperimentStudioView: React.FC = () => {
     setLoadingExperiment(true);
     try {
       const data = await runAnalysis("experiment", target);
-      setExperimentReport(data);
+      setExperimentReport(data as ExperimentReport);
     } catch (e) {
       console.error(e);
     } finally {
@@ -89,7 +127,7 @@ export const ExperimentStudioView: React.FC = () => {
     );
   }
 
-  const results: any[] = experimentReport?.results || [];
+  const results = experimentReport?.results ?? [];
 
   return (
     <div className="space-y-6 py-4">
@@ -110,7 +148,7 @@ export const ExperimentStudioView: React.FC = () => {
             </label>
             <select
               value={target}
-              onChange={(e) => setTarget(e.target.value)}
+              onChange={(e) => handleTargetChange(e.target.value)}
               className="bg-zinc-950 border border-zinc-850 rounded px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer w-60"
             >
               <option value="">Select Target Column</option>
@@ -147,7 +185,7 @@ export const ExperimentStudioView: React.FC = () => {
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {recommendReport.algorithms?.map((algo: any, idx: number) => (
+            {recommendReport.algorithms?.map((algo, idx) => (
               <div
                 key={idx}
                 className="bg-zinc-900/30 border border-zinc-800 rounded-lg p-5 flex flex-col justify-between"
@@ -224,10 +262,12 @@ export const ExperimentStudioView: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {results.map((r: any, idx: number) => {
+                {results.map((r, idx) => {
                   const isBest = r.name === experimentReport.best_model;
-                  const f1 = r.metrics?.f1?.mean || r.metrics?.f1 || 0.0;
-                  const roc = r.metrics?.roc_auc?.mean || r.metrics?.roc_auc || 0.0;
+                  const f1Metric = r.metrics?.f1;
+                  const rocMetric = r.metrics?.roc_auc;
+                  const f1 = typeof f1Metric === "number" ? f1Metric : f1Metric?.mean ?? 0;
+                  const roc = typeof rocMetric === "number" ? rocMetric : rocMetric?.mean ?? 0;
                   
                   return (
                     <tr key={idx} className={`border-b border-zinc-850 ${isBest ? "bg-emerald-950/5" : ""}`}>
