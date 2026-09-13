@@ -1,6 +1,12 @@
 "use client";
-
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useCallback, useContext, useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import { getBackendToken, clearBackendToken } from "@/lib/backend-token";
+import {
+  parsePersistedId,
+  reconcileWorkspaceSelection,
+  workspaceStorageKey,
+} from "@/lib/workspace-selection";
 
 export type TabName =
   | "landing"
@@ -98,6 +104,7 @@ interface WorkspaceContextProps {
     datasetId: number,
     payload: { transform: string; columns: string[]; evidence?: Record<string, unknown>; title?: string }
   ) => Promise<ApplyTransformResult>;
+  apiFetch: <T,>(path: string, options?: RequestInit) => Promise<T>;
 }
 
 export interface ApplyTransformResult {
@@ -110,6 +117,11 @@ export interface ApplyTransformResult {
 const WorkspaceContext = createContext<WorkspaceContextProps | undefined>(undefined);
 
 export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { data: authSession } = useSession();
+  const workspaceUserId = authSession?.user?.id || authSession?.user?.email || "authenticated-user";
+  const projectStorageKey = workspaceStorageKey(workspaceUserId, "projectId");
+  const datasetStorageKey = workspaceStorageKey(workspaceUserId, "datasetId");
+  const tabStorageKey = workspaceStorageKey(workspaceUserId, "activeTab");
   const [apiBase, setApiBaseState] = useState<string>(() => {
     if (typeof window === "undefined") return "/api";
     const saved = window.localStorage.getItem("detabetaApiBase");
@@ -117,10 +129,35 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
   const [projects, setProjects] = useState<Project[]>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
-  const [selectedDatasetId, setSelectedDatasetId] = useState<number | null>(null);
+  // Start from a safe empty workspace. Persisted IDs are restored only after
+  // the backend confirms that they belong to the current signed-in user.
+  const [selectedProjectId, setSelectedProjectIdState] = useState<number | null>(null);
+  const [selectedDatasetId, setSelectedDatasetIdState] = useState<number | null>(null);
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
-  const [activeTab, setActiveTab] = useState<TabName>("landing");
+  const [activeTab, setActiveTabState] = useState<TabName>("dashboard");
+
+  const setActiveTab = (tab: TabName) => {
+    setActiveTabState(tab);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(tabStorageKey, tab);
+    }
+  };
+
+  const setSelectedProjectId = (id: number | null) => {
+    setSelectedProjectIdState(id);
+    if (typeof window !== "undefined") {
+      if (id !== null) window.localStorage.setItem(projectStorageKey, String(id));
+      else window.localStorage.removeItem(projectStorageKey);
+    }
+  };
+
+  const setSelectedDatasetId = (id: number | null) => {
+    setSelectedDatasetIdState(id);
+    if (typeof window !== "undefined") {
+      if (id !== null) window.localStorage.setItem(datasetStorageKey, String(id));
+      else window.localStorage.removeItem(datasetStorageKey);
+    }
+  };
   
   const [rightPanel, setRightPanel] = useState<RightPanelState>({
     isOpen: false,
@@ -155,12 +192,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
-  const showToast = (message: string, type: "success" | "error" = "success") => {
+  const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
     setToast({ message, type });
     setTimeout(() => {
       setToast({ message: "", type: null });
     }, 3000);
-  };
+  }, []);
 
   const openRightPanel = (type: RightPanelState["type"], data: unknown) => {
     setRightPanel({ isOpen: true, type, data });
@@ -171,10 +208,19 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   // Helper fetch function
-  const apiFetch = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const apiFetch = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    let token: string;
+    try {
+      token = await getBackendToken();
+    } catch {
+      showToast("Authentication failed. Please sign in again.", "error");
+      throw new Error("Authentication failed");
+    }
+
+    const authHeader = { Authorization: `Bearer ${token}` };
     const headers = options.body instanceof FormData 
-      ? {} 
-      : { "Content-Type": "application/json", ...(options.headers || {}) };
+      ? { ...authHeader, ...(options.headers || {}) }
+      : { "Content-Type": "application/json", ...authHeader, ...(options.headers || {}) };
 
     const url = `${apiBase.replace(/\/$/, "")}${path}`;
     
@@ -183,6 +229,11 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ...options,
         headers,
       });
+
+      // Clear backend token on auth failure so next request fetches a fresh one.
+      if (response.status === 401) {
+        clearBackendToken();
+      }
 
       const contentType = response.headers.get("content-type") || "";
       let data: unknown;
@@ -203,18 +254,32 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       showToast(error instanceof Error ? error.message : "Network error occurred", "error");
       throw error;
     }
-  };
+  }, [apiBase, showToast]);
 
   // Like apiFetch, but also returns response headers so callers can read the
   // cache metadata (X-DetaBeta-Cached / X-DetaBeta-Session-Id) the analysis
   // endpoints attach.
-  const apiFetchWithHeaders = async <T,>(path: string, options: RequestInit = {}) => {
+  const apiFetchWithHeaders = useCallback(async <T,>(path: string, options: RequestInit = {}) => {
+    let token: string;
+    try {
+      token = await getBackendToken();
+    } catch {
+      showToast("Authentication failed. Please sign in again.", "error");
+      throw new Error("Authentication failed");
+    }
+
+    const authHeader = { Authorization: `Bearer ${token}` };
     const headers = options.body instanceof FormData
-      ? {}
-      : { "Content-Type": "application/json", ...(options.headers || {}) };
+      ? { ...authHeader, ...(options.headers || {}) }
+      : { "Content-Type": "application/json", ...authHeader, ...(options.headers || {}) };
     const url = `${apiBase.replace(/\/$/, "")}${path}`;
     try {
       const response = await fetch(url, { ...options, headers });
+
+      if (response.status === 401) {
+        clearBackendToken();
+      }
+
       const contentType = response.headers.get("content-type") || "";
       const data: unknown = contentType.includes("application/json")
         ? await response.json()
@@ -229,28 +294,19 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       showToast(error instanceof Error ? error.message : "Network error occurred", "error");
       throw error;
     }
-  };
+  }, [apiBase, showToast]);
 
   const loadProjects = async () => {
-    try {
-      const data = await apiFetch<Project[]>("/projects");
-      setProjects(data);
-    } catch (e) {
-      console.error(e);
-    }
+    const data = await apiFetch<Project[]>("/projects");
+    setProjects(data);
   };
 
   const loadDatasets = async (projectId: number) => {
-    try {
-      const data = await apiFetch<Dataset[]>(`/projects/${projectId}/datasets`);
-      setDatasets(data);
-    } catch (e) {
-      console.error(e);
-    }
+    const data = await apiFetch<Dataset[]>(`/projects/${projectId}/datasets`);
+    setDatasets(data);
   };
 
   const selectProject = async (projectId: number | null) => {
-    setSelectedProjectId(projectId);
     setSelectedDatasetId(null);
     setSelectedDataset(null);
     setDatasets([]);
@@ -259,10 +315,27 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setSession({ id: null, status: "idle", cached: false });
     closeRightPanel();
     if (projectId) {
-      await loadDatasets(projectId);
-      showToast(`Switched to Project #${projectId}`);
-      setActiveTab("overview");
+      if (!projects.some((project) => project.id === projectId)) {
+        setSelectedProjectId(null);
+        setActiveTab("dashboard");
+        showToast("That project is no longer available. The project list was refreshed.", "error");
+        await loadProjects().catch(() => undefined);
+        return;
+      }
+
+      try {
+        const data = await apiFetch<Dataset[]>(`/projects/${projectId}/datasets`);
+        setDatasets(data);
+        setSelectedProjectId(projectId);
+        showToast(`Switched to Project #${projectId}`);
+        setActiveTab("overview");
+      } catch {
+        setSelectedProjectId(null);
+        setActiveTab("dashboard");
+        await loadProjects().catch(() => undefined);
+      }
     } else {
+      setSelectedProjectId(null);
       setActiveTab("dashboard");
     }
   };
@@ -330,8 +403,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       await loadProjects();
       showToast("Project deleted");
-    } catch (e) {
-      console.error(e);
+    } catch {
+      // apiFetch already presents the failure to the user.
     }
   };
 
@@ -346,12 +419,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         await loadDatasets(selectedProjectId);
       }
       showToast("Dataset deleted");
-    } catch (e) {
-      console.error(e);
+    } catch {
+      // apiFetch already presents the failure to the user.
     }
   };
 
-  const runAnalysis = async (
+  const runAnalysis = useCallback(async (
     engineKey: string,
     target?: string,
     opts?: { refresh?: boolean }
@@ -390,7 +463,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setSession((prev) => ({ ...prev, status: "failed", cached: false }));
       throw e;
     }
-  };
+  }, [apiFetchWithHeaders, selectedDatasetId]);
 
   const applyTransform = async (
     datasetId: number,
@@ -411,19 +484,25 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       await loadDatasets(selectedProjectId);
       await loadProjects();
     }
+    setSelectedDatasetId(result.dataset.id);
+    setSelectedDataset(result.dataset);
+    resultsCacheRef.current.clear();
+    setSessions([]);
+    setSession({ id: null, status: "idle", cached: false });
+    closeRightPanel();
     return result;
   };
 
-  const loadSessions = async (target?: string) => {
+  const loadSessions = useCallback(async (target?: string) => {
     if (!selectedDatasetId) return;
     const query = target ? `?target=${encodeURIComponent(target)}` : "";
     try {
       const data = await apiFetch<SessionSummary[]>(`/datasets/${selectedDatasetId}/sessions${query}`);
       setSessions(data);
-    } catch (e) {
-      console.error(e);
+    } catch {
+      setSessions([]);
     }
-  };
+  }, [apiFetch, selectedDatasetId]);
 
   const rerunSession = async (target?: string) => {
     if (!selectedDatasetId) throw new Error("No dataset selected");
@@ -438,9 +517,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setSession({ id: null, status: "idle", cached: false });
       await loadSessions(target);
       showToast("Started a new analysis session");
-    } catch (e) {
-      console.error(e);
-      throw e;
+    } catch (error) {
+      throw error;
     }
   };
 
@@ -449,18 +527,60 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     async function loadInitialProjects() {
       try {
-        const response = await fetch(`${apiBase.replace(/\/$/, "")}/projects`);
-        if (!response.ok) throw new Error(response.statusText || "Failed to load projects");
-        const data = await response.json() as Project[];
-        if (!cancelled) setProjects(data);
-      } catch (error: unknown) {
-        console.error("Failed to load initial projects:", error);
+        // Pre-Supabase builds used global keys. They can point at a project
+        // owned by a different account, so never import them into user-scoped state.
+        window.localStorage.removeItem("detabetaSelectedProjectId");
+        window.localStorage.removeItem("detabetaSelectedDatasetId");
+        window.localStorage.removeItem("detabetaActiveTab");
+
+        const savedProjectId = parsePersistedId(window.localStorage.getItem(projectStorageKey));
+        const savedDatasetId = parsePersistedId(window.localStorage.getItem(datasetStorageKey));
+        const savedTab = (window.localStorage.getItem(tabStorageKey) as TabName | null) || "dashboard";
+        const data = await apiFetch<Project[]>("/projects");
+        if (cancelled) return;
+        setProjects(data);
+
+        let dsList: Dataset[] = [];
+        if (savedProjectId && data.some((project) => project.id === savedProjectId)) {
+          dsList = await apiFetch<Dataset[]>(`/projects/${savedProjectId}/datasets`);
+        }
+
+        if (cancelled) return;
+        const reconciled = reconcileWorkspaceSelection({
+          projects: data,
+          datasets: dsList,
+          savedProjectId,
+          savedDatasetId,
+          savedTab,
+        });
+
+        setDatasets(reconciled.projectId ? dsList : []);
+        setSelectedProjectId(reconciled.projectId);
+        setSelectedDatasetId(reconciled.datasetId);
+        setSelectedDataset(
+          reconciled.datasetId ? dsList.find((dataset) => dataset.id === reconciled.datasetId) || null : null,
+        );
+        setActiveTab(reconciled.tab);
+        resultsCacheRef.current.clear();
+        setSessions([]);
+        setSession({ id: null, status: "idle", cached: false });
+        closeRightPanel();
+      } catch {
+        if (cancelled) return;
+        setProjects([]);
+        setDatasets([]);
+        setSelectedProjectId(null);
+        setSelectedDatasetId(null);
+        setSelectedDataset(null);
+        setActiveTab("dashboard");
       }
     }
 
     void loadInitialProjects();
     return () => { cancelled = true; };
-  }, [apiBase]);
+    // apiFetch changes with apiBase. The storage keys change with the signed-in user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBase, workspaceUserId]);
 
   return (
     <WorkspaceContext.Provider
@@ -494,6 +614,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteDataset,
         runAnalysis,
         applyTransform,
+        apiFetch,
       }}
     >
       {children}

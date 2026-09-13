@@ -8,11 +8,13 @@ CSV is unreadable we reject the request before creating any DB row.
 
 from __future__ import annotations
 
+import os
 import re
 
 import pandas as pd
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from api.deps import get_dataset_or_404, get_project_or_404
@@ -37,6 +39,34 @@ router = APIRouter(tags=["datasets"])
 
 # How many rows to include in a preview.
 _PREVIEW_ROWS = 10
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def _configured_upload_limit() -> int:
+    """Read a positive byte limit, falling back to 25 MiB for bad settings."""
+    try:
+        configured = int(os.environ.get("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+    except ValueError:
+        return 25 * 1024 * 1024
+    return configured if configured > 0 else 25 * 1024 * 1024
+
+
+MAX_UPLOAD_BYTES = _configured_upload_limit()
+
+
+async def _read_upload_with_limit(file: UploadFile) -> bytes:
+    """Read one multipart upload without accepting more than the configured limit."""
+    parts: list[bytes] = []
+    size = 0
+    while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+        size += len(chunk)
+        if size > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Dataset is larger than the 25 MiB upload limit.",
+            )
+        parts.append(chunk)
+    return b"".join(parts)
 
 
 @router.post(
@@ -54,7 +84,7 @@ async def upload_dataset(
     Steps: read bytes -> save+validate as CSV (storage service) -> record a
     Dataset row with the parsed shape.
     """
-    raw = await file.read()
+    raw = await _read_upload_with_limit(file)
     if not raw:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty."
@@ -68,16 +98,24 @@ async def upload_dataset(
         # Bad CSV -> 400 with the specific parse error.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    dataset = Dataset(
-        project_id=project.id,
-        name=file.filename or "dataset.csv",
-        storage_path=rel_path,
-        n_rows=n_rows,
-        n_columns=n_cols,
-    )
-    db.add(dataset)
-    db.commit()
-    db.refresh(dataset)
+    try:
+        dataset = Dataset(
+            project_id=project.id,
+            name=file.filename or "dataset.csv",
+            storage_path=rel_path,
+            n_rows=n_rows,
+            n_columns=n_cols,
+        )
+        db.add(dataset)
+        db.commit()
+        db.refresh(dataset)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        storage.delete_file(rel_path)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Dataset metadata could not be saved. Please try again.",
+        ) from exc
     return DatasetOut.model_validate(dataset)
 
 
@@ -94,6 +132,12 @@ def _next_version_name(source_name: str, existing_names: set[str]) -> str:
     while f"{base}_v{version}.csv" in existing_names:
         version += 1
     return f"{base}_v{version}.csv"
+
+
+def _is_legacy_storage_path(path: str) -> bool:
+    """Identify the pre-Supabase ``<project id>/<filename>`` key format."""
+    first, _, remainder = path.replace("\\", "/").partition("/")
+    return bool(remainder) and first.isdigit()
 
 
 @router.post(
@@ -116,6 +160,14 @@ def apply_transform_to_dataset(
     try:
         source_df = storage.load_dataframe(dataset.storage_path)
     except FileNotFoundError as exc:
+        if _is_legacy_storage_path(dataset.storage_path):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This dataset is still stored in the old local format. "
+                    "Migrate the legacy dataset before creating a new version."
+                ),
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Dataset {dataset.id} has no stored file.",
@@ -143,19 +195,33 @@ def apply_transform_to_dataset(
     }
     new_name = _next_version_name(dataset.name, existing)
 
-    rel_path, n_rows, n_cols = storage.save_dataframe(
-        dataset.project_id, new_name, new_df
-    )
-    new_dataset = Dataset(
-        project_id=dataset.project_id,
-        name=new_name,
-        storage_path=rel_path,
-        n_rows=n_rows,
-        n_columns=n_cols,
-    )
-    db.add(new_dataset)
-    db.commit()
-    db.refresh(new_dataset)
+    try:
+        rel_path, n_rows, n_cols = storage.save_dataframe(
+            dataset.project_id, new_name, new_df
+        )
+    except Exception as exc:  # object storage errors must not leak through the API
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The new dataset version could not be saved. Please try again.",
+        ) from exc
+    try:
+        new_dataset = Dataset(
+            project_id=dataset.project_id,
+            name=new_name,
+            storage_path=rel_path,
+            n_rows=n_rows,
+            n_columns=n_cols,
+        )
+        db.add(new_dataset)
+        db.commit()
+        db.refresh(new_dataset)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        storage.delete_file(rel_path)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Derived dataset metadata could not be saved. Please try again.",
+        ) from exc
 
     return ApplyTransformResult(
         dataset=DatasetOut.model_validate(new_dataset),

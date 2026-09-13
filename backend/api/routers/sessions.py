@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from api.deps import get_dataset_or_404
+from api.auth import UserIdentity, get_current_user
 from api.schemas import EngineResultOut, SessionDetailOut, SessionOut
-from db import AnalysisSession, Dataset, get_db
+from db import AnalysisSession, Dataset, Project, get_db
 from services import sessions
 
 # Two routers: one nested under a dataset, one for a session by id.
@@ -93,13 +94,26 @@ def rerun_session(
 @session_router.get("/{session_id}", response_model=SessionDetailOut)
 def get_session_detail(
     session_id: int,
+    user: UserIdentity = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SessionDetailOut:
     """Return a session with the full cached output of every engine that ran."""
     session = db.get(AnalysisSession, session_id)
     if session is None:
-        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id} not found.",
+        )
 
+    # Verify ownership through the dataset -> project chain.
+    dataset = db.get(Dataset, session.dataset_id)
+    if dataset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id} not found.",
+        )
+    project = db.get(Project, dataset.project_id)
+    if project is None or project.user_id != user.sub:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id} not found.",

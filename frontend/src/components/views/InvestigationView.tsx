@@ -32,8 +32,8 @@ export const InvestigationView: React.FC = () => {
       try {
         const data = await runAnalysis("investigate");
         if (!cancelled) setReport(data as InvestigationReport);
-      } catch (error) {
-        console.error(error);
+      } catch {
+        if (!cancelled) setReport(null);
       } finally {
         if (!cancelled) setLoading(false);
       }

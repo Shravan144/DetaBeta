@@ -6,10 +6,15 @@ import type { NextConfig } from "next";
 const backendUrl = (process.env.BACKEND_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // Keep the same bound as FastAPI so a valid 25 MiB CSV reaches the API.
+    proxyClientMaxBodySize: "25mb",
+  },
   async rewrites() {
     return [
       {
-        source: "/api/:path*",
+        // Proxy /api/* to FastAPI backend EXCEPT /api/auth/* which is handled by NextAuth & token route.
+        source: "/api/:path((?!auth).*)" as string,
         destination: `${backendUrl}/:path*`,
       },
     ];

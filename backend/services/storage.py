@@ -1,126 +1,173 @@
-"""
-File storage for uploaded CSVs.
-
-WHY A SEPARATE LAYER?
----------------------
-The database stores *metadata* about a dataset (name, shape, path). The actual
-bytes of the CSV live on disk. This module is the single owner of that folder:
-it decides where files go, saves them, loads them back as DataFrames, and
-deletes them. Routes and other services never build file paths by hand.
-
-In development everything lives under `backend/storage/`. Swapping this for S3
-or Vercel Blob later means changing only this one file.
-"""
+"""Durable, private storage for uploaded CSV datasets."""
 
 from __future__ import annotations
 
+import io
 import os
 import tempfile
+import uuid
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
-# Root folder for all stored files. Defaults to a folder in the system temp dir
-# (/tmp) because that is reliably writable under Vercel's services runtime and
-# in serverless deployments. Overridable via the STORAGE_ROOT env var (and for
-# tests, which point it at a throwaway folder).
-STORAGE_ROOT = Path(os.environ.get("STORAGE_ROOT", Path(tempfile.gettempdir()) / "detabeta_storage"))
 
-
-def _project_dir(project_id: int) -> Path:
-    """Folder that holds one project's files, created on demand."""
-    d = STORAGE_ROOT / str(project_id)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def save_csv_bytes(project_id: int, filename: str, data: bytes) -> tuple[str, int, int]:
-    """Persist raw uploaded bytes as a CSV and report its shape.
-
-    Returns a tuple of (relative_storage_path, n_rows, n_columns).
-
-    We validate that the bytes actually parse as a CSV *before* committing
-    anything to the database, so we never end up with a Dataset row pointing at
-    an unreadable file. Raises ValueError on a bad/empty CSV.
-    """
-    safe_name = _safe_filename(filename)
-    dest = _project_dir(project_id) / safe_name
-
-    # Write the bytes first, then try to parse. If parsing fails we remove the
-    # file and raise, leaving no orphan behind.
-    dest.write_bytes(data)
-    try:
-        df = pd.read_csv(dest)
-    except Exception as exc:  # noqa: BLE001 - we re-raise as a clean ValueError
-        dest.unlink(missing_ok=True)
-        raise ValueError(f"Uploaded file is not a readable CSV: {exc}") from exc
-
-    if df.shape[1] == 0 or df.shape[0] == 0:
-        dest.unlink(missing_ok=True)
-        raise ValueError("CSV parsed but contains no rows/columns.")
-
-    rel_path = f"{project_id}/{safe_name}"
-    return rel_path, int(df.shape[0]), int(df.shape[1])
-
-
-def save_dataframe(project_id: int, filename: str, df: pd.DataFrame) -> tuple[str, int, int]:
-    """Persist a DataFrame as a CSV, choosing a non-colliding filename.
-
-    Used when we *derive* a new dataset (e.g. after applying a Feature Lab
-    transform). If `filename` already exists in the project folder we append a
-    numeric suffix ("passengers_v2.csv" -> "passengers_v2_1.csv") so we never
-    silently overwrite an existing version.
-
-    Returns (relative_storage_path, n_rows, n_columns).
-    """
-    safe_name = _safe_filename(filename)
-    dest = _unique_path(_project_dir(project_id), safe_name)
-    df.to_csv(dest, index=False)
-    rel_path = f"{project_id}/{dest.name}"
-    return rel_path, int(df.shape[0]), int(df.shape[1])
-
-
-def _unique_path(folder: Path, filename: str) -> Path:
-    """Return a path in `folder` that does not yet exist, suffixing if needed."""
-    candidate = folder / filename
-    if not candidate.exists():
-        return candidate
-    stem = candidate.stem
-    suffix = candidate.suffix
-    i = 1
-    while True:
-        alt = folder / f"{stem}_{i}{suffix}"
-        if not alt.exists():
-            return alt
-        i += 1
-
-
-def load_dataframe(storage_path: str) -> pd.DataFrame:
-    """Load a stored CSV back into a pandas DataFrame.
-
-    `storage_path` is the relative path we saved on the Dataset row
-    (e.g. "3/passengers.csv"). Raises FileNotFoundError if it is missing.
-    """
-    full = STORAGE_ROOT / storage_path
-    if not full.exists():
-        raise FileNotFoundError(f"Stored dataset not found: {storage_path}")
-    return pd.read_csv(full)
-
-
-def delete_file(storage_path: str) -> None:
-    """Remove a stored CSV. Silent if it is already gone."""
-    (STORAGE_ROOT / storage_path).unlink(missing_ok=True)
+STORAGE_ROOT = Path(
+    os.environ.get("STORAGE_ROOT", Path(tempfile.gettempdir()) / "detabeta_storage")
+)
 
 
 def _safe_filename(filename: str) -> str:
-    """Strip any directory components so an upload can't escape its folder.
-
-    e.g. "../../etc/passwd" -> "passwd". A tiny but important guard against
-    path-traversal via a malicious filename.
-    """
+    """Strip directory components and ensure a CSV extension."""
     name = os.path.basename(filename or "").strip()
     if not name:
         return "dataset.csv"
-    if not name.lower().endswith(".csv"):
-        name += ".csv"
-    return name
+    return name if name.lower().endswith(".csv") else f"{name}.csv"
+
+
+def _storage_key(project_id: int, filename: str) -> str:
+    """Return an opaque non-colliding key, independent of the display name."""
+    return f"projects/{project_id}/{uuid.uuid4().hex}_{_safe_filename(filename)}"
+
+
+def _parse_csv(data: bytes) -> pd.DataFrame:
+    """Validate a non-empty CSV before persisting it."""
+    try:
+        dataframe = pd.read_csv(io.BytesIO(data))
+    except Exception as exc:  # noqa: BLE001 - turn parser details into an API validation error
+        raise ValueError(f"Uploaded file is not a readable CSV: {exc}") from exc
+    if dataframe.shape[0] == 0 or dataframe.shape[1] == 0:
+        raise ValueError("CSV parsed but contains no rows/columns.")
+    return dataframe
+
+
+class LocalDatasetStorage:
+    """Filesystem adapter for tests and offline development."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def save_csv_bytes(self, project_id: int, filename: str, data: bytes) -> tuple[str, int, int]:
+        dataframe = _parse_csv(data)
+        key = _storage_key(project_id, filename)
+        destination = self.root / key
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+        return key, int(dataframe.shape[0]), int(dataframe.shape[1])
+
+    def save_dataframe(
+        self, project_id: int, filename: str, dataframe: pd.DataFrame
+    ) -> tuple[str, int, int]:
+        key = _storage_key(project_id, filename)
+        destination = self.root / key
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        dataframe.to_csv(destination, index=False)
+        return key, int(dataframe.shape[0]), int(dataframe.shape[1])
+
+    def load_dataframe(self, storage_path: str) -> pd.DataFrame:
+        path = self.root / storage_path
+        if not path.exists():
+            raise FileNotFoundError(f"Stored dataset not found: {storage_path}")
+        return pd.read_csv(path)
+
+    def delete_file(self, storage_path: str) -> None:
+        (self.root / storage_path).unlink(missing_ok=True)
+
+
+class SupabaseDatasetStorage:
+    """Private Supabase Storage adapter; it stores keys, never public URLs."""
+
+    def __init__(self, client: Any, bucket_name: str) -> None:
+        self.bucket = client.storage.from_(bucket_name)
+
+    def save_csv_bytes(self, project_id: int, filename: str, data: bytes) -> tuple[str, int, int]:
+        dataframe = _parse_csv(data)
+        key = _storage_key(project_id, filename)
+        self.bucket.upload(
+            path=key,
+            file=data,
+            file_options={"content-type": "text/csv", "upsert": "false"},
+        )
+        return key, int(dataframe.shape[0]), int(dataframe.shape[1])
+
+    def save_dataframe(
+        self, project_id: int, filename: str, dataframe: pd.DataFrame
+    ) -> tuple[str, int, int]:
+        key = _storage_key(project_id, filename)
+        self.bucket.upload(
+            path=key,
+            file=dataframe.to_csv(index=False).encode("utf-8"),
+            file_options={"content-type": "text/csv", "upsert": "false"},
+        )
+        return key, int(dataframe.shape[0]), int(dataframe.shape[1])
+
+    def load_dataframe(self, storage_path: str) -> pd.DataFrame:
+        try:
+            data = self.bucket.download(storage_path)
+        except Exception as exc:  # noqa: BLE001 - normalize both adapters to FileNotFoundError
+            raise FileNotFoundError(f"Stored dataset not found: {storage_path}") from exc
+        return pd.read_csv(io.BytesIO(data))
+
+    def delete_file(self, storage_path: str) -> None:
+        try:
+            self.bucket.remove([storage_path])
+        except Exception:  # deleting a missing object is intentionally idempotent
+            return
+
+
+def _supabase_storage_from_environment() -> SupabaseDatasetStorage:
+    """Create a server-only Supabase client after validating configuration."""
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    secret_key = (
+        os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+        or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    )
+    bucket = os.environ.get("SUPABASE_STORAGE_BUCKET", "datasets").strip()
+    missing = [
+        name
+        for name, value in {
+            "SUPABASE_URL": url,
+            "SUPABASE_SECRET_KEY": secret_key,
+            "SUPABASE_STORAGE_BUCKET": bucket,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError("Supabase storage is enabled but missing: " + ", ".join(missing))
+
+    try:
+        from supabase import create_client
+    except ImportError as exc:  # pragma: no cover - the package is declared below
+        raise RuntimeError("Supabase storage requires the 'supabase' package.") from exc
+    return SupabaseDatasetStorage(create_client(url, secret_key), bucket)
+
+
+def _active_storage() -> LocalDatasetStorage | SupabaseDatasetStorage:
+    backend = os.environ.get("STORAGE_BACKEND", "local").strip().lower()
+    if backend in ("", "local"):
+        return LocalDatasetStorage(STORAGE_ROOT)
+    if backend == "supabase":
+        return _supabase_storage_from_environment()
+    raise RuntimeError(f"Unsupported STORAGE_BACKEND={backend!r}. Use 'local' or 'supabase'.")
+
+
+def save_csv_bytes(project_id: int, filename: str, data: bytes) -> tuple[str, int, int]:
+    """Persist validated upload bytes and return (object key, rows, columns)."""
+    return _active_storage().save_csv_bytes(project_id, filename, data)
+
+
+def save_dataframe(
+    project_id: int, filename: str, dataframe: pd.DataFrame
+) -> tuple[str, int, int]:
+    """Persist a derived dataframe as a new immutable dataset object."""
+    return _active_storage().save_dataframe(project_id, filename, dataframe)
+
+
+def load_dataframe(storage_path: str) -> pd.DataFrame:
+    """Load a dataframe from the currently selected storage adapter."""
+    return _active_storage().load_dataframe(storage_path)
+
+
+def delete_file(storage_path: str) -> None:
+    """Delete one dataset object; repeated deletion is safe."""
+    _active_storage().delete_file(storage_path)

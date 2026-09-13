@@ -34,8 +34,8 @@ export const DiagnosticsView: React.FC = () => {
       try {
         const data = await runAnalysis("health");
         if (!cancelled) setReport(data as HealthReport);
-      } catch (error) {
-        console.error(error);
+      } catch {
+        if (!cancelled) setReport(null);
       } finally {
         if (!cancelled) setLoading(false);
       }

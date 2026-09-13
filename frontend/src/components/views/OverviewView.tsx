@@ -79,8 +79,12 @@ export const OverviewView: React.FC = () => {
         setHealthScore(analysis.healthScore);
         setDiscoveries(analysis.discoveries);
       })
-      .catch((error: unknown) => {
-        if (!cancelled) console.error("Failed to load overview reports:", error);
+      .catch(() => {
+        if (!cancelled) {
+          setProfile(null);
+          setHealthScore(null);
+          setDiscoveries([]);
+        }
       });
     return () => { cancelled = true; };
   }, [fetchOverviewAnalysis, selectedDatasetId]);
@@ -96,8 +100,8 @@ export const OverviewView: React.FC = () => {
       setProfile(analysis.profile);
       setHealthScore(analysis.healthScore);
       setDiscoveries(analysis.discoveries);
-    } catch (e) {
-      console.error("Failed to re-run analysis:", e);
+    } catch {
+      // The workspace toast contains the backend failure message.
     } finally {
       setRerunning(false);
     }
@@ -139,8 +143,8 @@ export const OverviewView: React.FC = () => {
     try {
       await uploadDataset(file);
       setFile(null);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      // The workspace toast contains the upload failure message.
     } finally {
       setLoading(false);
     }

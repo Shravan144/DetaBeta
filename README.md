@@ -9,8 +9,8 @@ research report.
 
 - **Frontend:** Next.js, React, TypeScript, Tailwind CSS, Recharts
 - **Backend:** FastAPI, SQLAlchemy, pandas, SciPy, scikit-learn
-- **Data:** SQLite locally; PostgreSQL/Neon can be configured through
-  `DATABASE_URL`
+- **Data:** SQLite and local files for offline work; Supabase Postgres plus a
+  private Supabase Storage bucket for durable production data
 
 ## Prerequisites
 
@@ -52,6 +52,43 @@ research report.
 
    Open `http://localhost:3000`.
 
+## Supabase production persistence
+
+Supabase stores DetaBeta's project metadata, datasets, analysis sessions, and
+cached results in Postgres. The raw CSV bytes live in a **private** `datasets`
+bucket. Keep the app's existing authentication; Supabase Auth is not required
+for this integration.
+
+1. In Supabase, create a project and a private Storage bucket named `datasets`.
+2. Add these backend-only values to `.env` or to your deployment provider's
+   encrypted backend environment settings:
+
+   ```dotenv
+   DATABASE_URL=postgresql://...
+   STORAGE_BACKEND=supabase
+   SUPABASE_URL=https://your-project-ref.supabase.co
+   SUPABASE_SECRET_KEY=sb_secret_...
+   SUPABASE_STORAGE_BUCKET=datasets
+   MAX_UPLOAD_BYTES=26214400
+   ```
+
+   The database URI uses the password selected when the Supabase project was
+   created. URL-encode reserved password characters, for example `@` becomes
+   `%40`. `SUPABASE_SECRET_KEY` bypasses Supabase Storage policies, so it must
+   be supplied only to FastAPI—never to the browser, Git, or a `NEXT_PUBLIC_`
+   variable.
+3. Apply the database schema once, before starting or deploying the backend:
+
+   ```powershell
+   Push-Location backend
+   ..\.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
+   Pop-Location
+   ```
+
+4. Start the backend, create a project, upload a small CSV, run one analysis,
+   restart the backend, and refresh the browser. The project, file preview,
+   and session history should remain present.
+
 ## Verification
 
 ```powershell
@@ -91,6 +128,6 @@ local API base in development.
 
 ## Current scope
 
-The current upload format is CSV. Authentication, persistent cloud object
-storage, multi-format uploads, and schema migrations are the next production
-hardening milestones.
+The current upload format is CSV. Persistent cloud storage and versioned
+schema migrations are now supported; the next milestone is multi-format
+uploads.

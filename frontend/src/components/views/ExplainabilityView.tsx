@@ -135,7 +135,7 @@ const ConfusionMatrixPanel: React.FC<{ confusion: ConfusionMatrix | null | undef
 };
 
 export const ExplainabilityView: React.FC = () => {
-  const { selectedDatasetId, runAnalysis, openRightPanel, apiBase } = useWorkspace();
+  const { selectedDatasetId, runAnalysis, openRightPanel, apiFetch } = useWorkspace();
   
   const [columns, setColumns] = useState<string[]>([]);
   const [target, setTarget] = useState("");
@@ -153,9 +153,8 @@ export const ExplainabilityView: React.FC = () => {
     async function loadColumnsAndExplain() {
       setLoading(true);
       try {
-        const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
-        if (res.ok && !cancelled) {
-          const preview = await res.json() as { columns?: string[] };
+        const preview = await apiFetch<{ columns?: string[] }>(`/datasets/${selectedDatasetId}/preview`);
+        if (!cancelled) {
           const cols = preview.columns ?? [];
           setColumns(cols);
 
@@ -179,8 +178,8 @@ export const ExplainabilityView: React.FC = () => {
           }
         }
         }
-      } catch (error) {
-        console.error(error);
+      } catch {
+        if (!cancelled) setReport(null);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -188,7 +187,7 @@ export const ExplainabilityView: React.FC = () => {
 
     void loadColumnsAndExplain();
     return () => { cancelled = true; };
-  }, [apiBase, runAnalysis, selectedDatasetId]);
+  }, [apiFetch, runAnalysis, selectedDatasetId]);
 
   const handleTargetChange = async (newTarget: string) => {
     setTarget(newTarget);
@@ -205,8 +204,8 @@ export const ExplainabilityView: React.FC = () => {
       if (examples && examples.length > 0) {
         setSelectedRowIndex(examples[0].row_index);
       }
-    } catch (e) {
-      console.error(e);
+    } catch {
+      setReport(null);
     } finally {
       setLoading(false);
     }

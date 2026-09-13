@@ -52,8 +52,7 @@ export default function Home() {
       
       // Let the user upload a file or simulate it by switching to overview
       setActiveTab("overview");
-    } catch (e) {
-      console.error(e);
+    } catch {
       setActiveTab("dashboard");
     }
   };

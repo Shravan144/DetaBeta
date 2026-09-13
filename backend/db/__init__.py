@@ -13,6 +13,9 @@ from db.models import AnalysisSession, Dataset, EngineResult, Project
 from db.session import Base, SessionLocal, engine, get_db
 
 
+from sqlalchemy import inspect, text
+
+
 def init_db() -> None:
     """Create every table defined on Base if it does not already exist.
 
@@ -21,6 +24,15 @@ def init_db() -> None:
     models above is what registers them on Base.metadata.
     """
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight auto-migration: ensure projects table has user_id column
+    # on pre-existing databases created before auth was added.
+    inspector = inspect(engine)
+    if "projects" in inspector.get_table_names():
+        columns = [c["name"] for c in inspector.get_columns("projects")]
+        if "user_id" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN user_id VARCHAR(255)"))
 
 
 __all__ = [

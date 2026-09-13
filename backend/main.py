@@ -1,9 +1,9 @@
-"""
-DetaBeta API -- application entry point.
+"""DetaBeta API -- application entry point.
 
 This file assembles the whole backend:
   * creates the FastAPI app (with metadata that powers the /docs page),
   * enables CORS so a browser frontend can call it,
+  * registers rate-limiting middleware,
   * ensures the database tables exist on startup,
   * mounts the three routers (projects, datasets, analysis).
 
@@ -14,15 +14,28 @@ Then open http://localhost:8000/docs for the interactive API explorer.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from dotenv import load_dotenv
+
+# Load environment variables from .env file at startup
+load_dotenv()
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from api.routers import analysis, datasets, projects, sessions
-from db import init_db
+from db import get_db, init_db
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -32,9 +45,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     This is the modern replacement for the deprecated @app.on_event('startup').
     Code before `yield` runs at startup; code after would run at shutdown.
     """
-    init_db()
+    # Integration tests replace get_db with an isolated temporary database.
+    # Initializing the module-level engine in that case would unexpectedly touch
+    # the configured development/production database before the test starts.
+    if get_db not in _app.dependency_overrides:
+        init_db()
     yield
 
+
+# --- Rate limiting --------------------------------------------------------
+limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
 
 app = FastAPI(
     title="DetaBeta API",
@@ -47,12 +67,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 # --- CORS -----------------------------------------------------------------
-# During development we allow all origins so the Next.js dev server (whatever
-# port it lands on) can call the API. Tighten this to specific origins in prod
-# via the ALLOWED_ORIGINS env var (comma-separated).
-_origins_env = os.environ.get("ALLOWED_ORIGINS", "*")
-_allow_origins = ["*"] if _origins_env == "*" else [o.strip() for o in _origins_env.split(",")]
+# Read allowed origins from the environment. Default to localhost:3000 for
+# local development. Wildcard (*) is rejected to enforce explicit configuration.
+_origins_env = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000")
+
+if _origins_env.strip() == "*":
+    logger.warning(
+        "ALLOWED_ORIGINS='*' is insecure and rejected. "
+        "Falling back to http://localhost:3000. "
+        "Set explicit origins in production."
+    )
+    _allow_origins = ["http://localhost:3000"]
+else:
+    _allow_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,

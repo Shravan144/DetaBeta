@@ -13,10 +13,17 @@ uvicorn[standard]>=0.30 # the ASGI server that runs the app
 python-multipart>=0.0.9 # required by FastAPI to parse file uploads
 sqlalchemy>=2.0         # ORM for our tables (SQLite in dev, Neon Postgres in prod)
 psycopg[binary]>=3.1    # PostgreSQL driver (psycopg v3) used when DATABASE_URL points at Neon
+alembic>=1.13           # versioned database migrations for PostgreSQL deployments
+python-dotenv>=1.0      # loads local backend settings from .env
+supabase>=2.0           # private Supabase Storage client for production datasets
 
 # --- Testing ---
 pytest>=8.0
 httpx>=0.27             # used by FastAPI's TestClient in the API tests
+
+# --- Authentication & hardening ---
+PyJWT[crypto]>=2.8       # JWT token validation for backend auth
+slowapi>=0.1.9           # Rate limiting middleware
 
 # NOTE: We will add these as we reach the engines/screens that need them:
 # shap             -> Engine 8 (Explainability), optional heavier alternative

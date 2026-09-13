@@ -23,7 +23,7 @@ type DatasetProfile = {
 };
 
 export const DatasetView: React.FC = () => {
-  const { selectedDatasetId, apiBase, runAnalysis, openRightPanel } = useWorkspace();
+  const { selectedDatasetId, apiFetch, runAnalysis, openRightPanel } = useWorkspace();
   
   const [preview, setPreview] = useState<DatasetPreview | null>(null);
   const [profile, setProfile] = useState<DatasetProfile | null>(null);
@@ -42,14 +42,17 @@ export const DatasetView: React.FC = () => {
     async function loadPreviewAndProfile() {
       setLoading(true);
       try {
-        const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
-        if (res.ok && !cancelled) {
-          setPreview((await res.json()) as DatasetPreview);
+        const previewData = await apiFetch<DatasetPreview>(`/datasets/${selectedDatasetId}/preview`);
+        if (!cancelled) {
+          setPreview(previewData);
         }
         const profileData = await runAnalysis("understand");
         if (!cancelled) setProfile(profileData as DatasetProfile);
-      } catch (error) {
-        console.error(error);
+      } catch {
+        if (!cancelled) {
+          setPreview(null);
+          setProfile(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -57,7 +60,7 @@ export const DatasetView: React.FC = () => {
 
     void loadPreviewAndProfile();
     return () => { cancelled = true; };
-  }, [apiBase, runAnalysis, selectedDatasetId]);
+  }, [apiFetch, runAnalysis, selectedDatasetId]);
 
   const handleHeaderClick = (colName: string) => {
     if (!profile?.columns) return;

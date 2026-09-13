@@ -3,9 +3,11 @@
 import React, { useState } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { Plus, Trash2, Calendar, FileSpreadsheet, Loader2 } from "lucide-react";
+import { useSession } from "next-auth/react";
 
 export const DashboardView: React.FC = () => {
   const { projects, selectProject, createProject, deleteProject } = useWorkspace();
+  const { data: authSession } = useSession();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -20,8 +22,8 @@ export const DashboardView: React.FC = () => {
       setName("");
       setDescription("");
       setShowCreateModal(false);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      // The workspace toast contains the backend validation message.
     } finally {
       setLoading(false);
     }
@@ -33,7 +35,7 @@ export const DashboardView: React.FC = () => {
       <div className="flex justify-between items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-100">
-            Good evening, Researcher
+            {`Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, ${authSession?.user?.name || "Researcher"}`}
           </h1>
           <p className="text-xs text-zinc-500 mt-1">
             Welcome to DetaBeta. Choose an existing experiment launcher or start a scientific analysis.

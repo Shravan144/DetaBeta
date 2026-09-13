@@ -3,7 +3,9 @@
 import React from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { Play, FileDown, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
-
+import { LogOut } from "lucide-react";
+import { useSession, signOut } from "next-auth/react";
+import { clearBackendToken } from "@/lib/backend-token";
 export const TopBar: React.FC = () => {
   const {
     activeTab,
@@ -14,8 +16,16 @@ export const TopBar: React.FC = () => {
     datasets,
     selectProject,
     selectDataset,
+    setActiveTab,
     session,
   } = useWorkspace();
+
+  const { data: authSession } = useSession();
+
+  const handleSignOut = () => {
+    clearBackendToken();
+    signOut();
+  };
 
   if (activeTab === "landing") return null;
 
@@ -99,7 +109,7 @@ export const TopBar: React.FC = () => {
             <span className="text-zinc-600">/</span>
             <div className="flex items-center gap-2">
               <span className="text-zinc-200 font-semibold tracking-wider uppercase text-[10px] bg-zinc-900 px-2 py-1 border border-zinc-800 rounded">
-                Session #04
+                {session.id ? `Session #${session.id}` : "No session"}
               </span>
               {getStatusBadge()}
             </div>
@@ -112,17 +122,56 @@ export const TopBar: React.FC = () => {
         {selectedDataset && (
           <>
             <button
+              onClick={() => setActiveTab("overview")}
               disabled={session.status === "running"}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-zinc-950 text-xs font-semibold shadow transition cursor-pointer"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Run Analysis</span>
+              <span>Analysis Overview</span>
             </button>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 hover:bg-zinc-900 text-zinc-300 text-xs font-semibold transition cursor-pointer">
+            <button
+              onClick={() => setActiveTab("report")}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-800 hover:bg-zinc-900 text-zinc-300 text-xs font-semibold transition cursor-pointer"
+            >
               <FileDown className="w-3.5 h-3.5" />
               <span>Export</span>
             </button>
           </>
+        )}
+
+        {/* User info + sign out */}
+        {authSession?.user && (
+          <div className="flex items-center gap-2 ml-3 pl-3 border-l border-zinc-800">
+            <div className="text-right">
+              <p className="text-[11px] font-medium text-zinc-300 leading-tight">
+                {authSession.user.name || authSession.user.email}
+              </p>
+              {authSession.user.name && authSession.user.email && (
+                <p className="text-[9px] text-zinc-500 leading-tight">
+                  {authSession.user.email}
+                </p>
+              )}
+            </div>
+            {authSession.user.image ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={authSession.user.image}
+                alt=""
+                className="w-7 h-7 rounded-full border border-zinc-700"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-emerald-900 border border-emerald-800 flex items-center justify-center text-[10px] font-bold text-emerald-400">
+                {(authSession.user.name || authSession.user.email || "U")[0].toUpperCase()}
+              </div>
+            )}
+            <button
+              onClick={handleSignOut}
+              title="Sign out"
+              className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
         )}
       </div>
     </header>

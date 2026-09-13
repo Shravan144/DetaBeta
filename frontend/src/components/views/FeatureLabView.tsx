@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { Info, Loader2, AlertTriangle } from "lucide-react";
 
@@ -23,26 +23,40 @@ export const FeatureLabView: React.FC = () => {
   const [report, setReport] = useState<FeatureLabReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [applyingIdx, setApplyingIdx] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadFeatureRecommendations = useCallback(async () => {
+    if (!selectedDatasetId) return;
+
+    setLoading(true);
+    setError(null);
+    setReport(null);
+    try {
+      const data = await runAnalysis("feature-lab");
+      setReport(data as FeatureLabReport);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Feature recommendations could not be loaded."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [runAnalysis, selectedDatasetId]);
 
   useEffect(() => {
     if (!selectedDatasetId) return;
 
     let cancelled = false;
-    async function loadFeatureRecommendations() {
-      setLoading(true);
-      try {
-        const data = await runAnalysis("feature-lab");
-        if (!cancelled) setReport(data as FeatureLabReport);
-      } catch (error) {
-        console.error(error);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+    async function load() {
+      if (cancelled) return;
+      await loadFeatureRecommendations();
     }
 
-    void loadFeatureRecommendations();
+    void load();
     return () => { cancelled = true; };
-  }, [runAnalysis, selectedDatasetId]);
+  }, [loadFeatureRecommendations, selectedDatasetId]);
 
   const handleApplyTransform = async (rec: FeatureRecommendation, idx: number) => {
     if (!selectedDatasetId) return;
@@ -62,9 +76,8 @@ export const FeatureLabView: React.FC = () => {
         : delta < 0 ? `health ${delta} → ${after}/100 (${grade})`
         : `health unchanged at ${after}/100 (${grade})`;
       showToast(`Created ${result.dataset.name} — ${deltaText}`);
-    } catch (e) {
-      // applyTransform already surfaces an error toast; nothing more to do.
-      console.error(e);
+    } catch {
+      // apiFetch has already shown the detailed error toast.
     } finally {
       setApplyingIdx(null);
     }
@@ -81,8 +94,22 @@ export const FeatureLabView: React.FC = () => {
 
   if (!report) {
     return (
-      <div className="text-zinc-500 text-center py-20">
-        Failed to load feature recommendations.
+      <div className="max-w-xl mx-auto mt-12 p-6 text-center rounded-xl border border-rose-900/40 bg-rose-950/10 space-y-4">
+        <AlertTriangle className="w-6 h-6 text-rose-400 mx-auto" />
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-200">Feature Lab could not load</h2>
+          <p className="text-xs text-zinc-400 mt-2 leading-relaxed">
+            {error || "Select a dataset to receive feature recommendations."}
+          </p>
+        </div>
+        {selectedDatasetId && (
+          <button
+            onClick={() => void loadFeatureRecommendations()}
+            className="px-3.5 py-1.5 rounded bg-emerald-500 hover:bg-emerald-600 text-zinc-950 text-xs font-semibold transition"
+          >
+            Try Again
+          </button>
+        )}
       </div>
     );
   }

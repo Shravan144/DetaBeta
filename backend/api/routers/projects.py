@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.deps import get_project_or_404
+from api.auth import UserIdentity, get_current_user
 from api.schemas import Message, ProjectCreate, ProjectOut
 from db import Project, get_db
 from services import storage
@@ -31,9 +32,13 @@ def _to_out(project: Project) -> ProjectOut:
 
 
 @router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
-def create_project(body: ProjectCreate, db: Session = Depends(get_db)) -> ProjectOut:
-    """Create a new project."""
-    project = Project(name=body.name, description=body.description)
+def create_project(
+    body: ProjectCreate,
+    user: UserIdentity = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectOut:
+    """Create a new project owned by the authenticated user."""
+    project = Project(name=body.name, description=body.description, user_id=user.sub)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -41,9 +46,16 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db)) -> Projec
 
 
 @router.get("", response_model=list[ProjectOut])
-def list_projects(db: Session = Depends(get_db)) -> list[ProjectOut]:
-    """List all projects, newest first."""
-    projects = db.scalars(select(Project).order_by(Project.created_at.desc())).all()
+def list_projects(
+    user: UserIdentity = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[ProjectOut]:
+    """List the authenticated user's projects, newest first."""
+    projects = db.scalars(
+        select(Project)
+        .where(Project.user_id == user.sub)
+        .order_by(Project.created_at.desc())
+    ).all()
     return [_to_out(p) for p in projects]
 
 

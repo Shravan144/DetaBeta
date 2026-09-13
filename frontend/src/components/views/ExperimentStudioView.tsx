@@ -38,7 +38,7 @@ type ExperimentReport = {
 type DatasetPreview = { columns?: string[] };
 
 export const ExperimentStudioView: React.FC = () => {
-  const { selectedDatasetId, runAnalysis, apiBase } = useWorkspace();
+  const { selectedDatasetId, runAnalysis, apiFetch } = useWorkspace();
   
   const [columns, setColumns] = useState<string[]>([]);
   const [target, setTarget] = useState("");
@@ -57,9 +57,8 @@ export const ExperimentStudioView: React.FC = () => {
     async function loadColumns() {
       setLoadingMetadata(true);
       try {
-        const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
-        if (res.ok && !cancelled) {
-          const preview = await res.json() as DatasetPreview;
+        const preview = await apiFetch<DatasetPreview>(`/datasets/${selectedDatasetId}/preview`);
+        if (!cancelled) {
           const nextColumns = preview.columns ?? [];
           setColumns(nextColumns);
           const defaultTgt = nextColumns.find((column) =>
@@ -67,8 +66,8 @@ export const ExperimentStudioView: React.FC = () => {
           );
           if (defaultTgt) setTarget(defaultTgt);
         }
-      } catch (error) {
-        console.error(error);
+      } catch {
+        if (!cancelled) setColumns([]);
       } finally {
         if (!cancelled) setLoadingMetadata(false);
       }
@@ -76,7 +75,7 @@ export const ExperimentStudioView: React.FC = () => {
 
     void loadColumns();
     return () => { cancelled = true; };
-  }, [apiBase, selectedDatasetId]);
+  }, [apiFetch, selectedDatasetId]);
 
   // Fetch algorithm recommendations when target changes
   useEffect(() => {
@@ -88,8 +87,8 @@ export const ExperimentStudioView: React.FC = () => {
       try {
         const data = await runAnalysis("recommend", target);
         if (!cancelled) setRecommendReport(data as RecommendationReport);
-      } catch (error) {
-        console.error(error);
+      } catch {
+        if (!cancelled) setRecommendReport(null);
       } finally {
         if (!cancelled) setLoadingRecommend(false);
       }
@@ -111,8 +110,8 @@ export const ExperimentStudioView: React.FC = () => {
     try {
       const data = await runAnalysis("experiment", target);
       setExperimentReport(data as ExperimentReport);
-    } catch (e) {
-      console.error(e);
+    } catch {
+      setExperimentReport(null);
     } finally {
       setLoadingExperiment(false);
     }

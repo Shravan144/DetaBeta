@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { Loader2, FileDown, FileText, FileCode, BookOpen } from "lucide-react";
+import { getBackendToken } from "@/lib/backend-token";
 
 type ReportSection = {
   key: string;
@@ -22,13 +23,14 @@ type ResearchReport = {
 };
 
 export const ReportsView: React.FC = () => {
-  const { selectedDatasetId, runAnalysis, apiBase, showToast } = useWorkspace();
+  const { selectedDatasetId, runAnalysis, apiBase, apiFetch, showToast } = useWorkspace();
   
   const [columns, setColumns] = useState<string[]>([]);
   const [target, setTarget] = useState("");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<ResearchReport | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Load columns to set default target
   useEffect(() => {
@@ -37,9 +39,8 @@ export const ReportsView: React.FC = () => {
     let cancelled = false;
     async function loadColumns() {
       try {
-        const res = await fetch(`${apiBase.replace(/\/$/, "")}/datasets/${selectedDatasetId}/preview`);
-        if (res.ok && !cancelled) {
-          const preview = await res.json() as { columns?: string[] };
+        const preview = await apiFetch<{ columns?: string[] }>(`/datasets/${selectedDatasetId}/preview`);
+        if (!cancelled) {
           const nextColumns = preview.columns ?? [];
           setColumns(nextColumns);
           const defaultTgt = nextColumns.find((column) =>
@@ -47,23 +48,34 @@ export const ReportsView: React.FC = () => {
           );
           if (defaultTgt) setTarget(defaultTgt);
         }
-      } catch (error) {
-        console.error(error);
+      } catch (requestError) {
+        if (!cancelled) {
+          setError(
+            requestError instanceof Error
+              ? requestError.message
+              : "Dataset columns could not be loaded."
+          );
+        }
       }
     }
 
     void loadColumns();
     return () => { cancelled = true; };
-  }, [apiBase, selectedDatasetId]);
+  }, [apiFetch, selectedDatasetId]);
 
   const handleGenerateReport = async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await runAnalysis("report", target || undefined);
       setReport(data as ResearchReport);
       showToast("Composed complete Research Report successfully.");
-    } catch (e) {
-      console.error(e);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "The report could not be composed."
+      );
     } finally {
       setLoading(false);
     }
@@ -81,7 +93,10 @@ export const ReportsView: React.FC = () => {
   const handleDownload = async (format: "html" | "md") => {
     setExporting(format);
     try {
-      const res = await fetch(exportUrl(format));
+      const token = await getBackendToken();
+      const res = await fetch(exportUrl(format), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
       // Prefer the server-provided filename from Content-Disposition.
@@ -97,8 +112,7 @@ export const ReportsView: React.FC = () => {
       a.remove();
       URL.revokeObjectURL(url);
       showToast(`Exported report as ${format.toUpperCase()}.`);
-    } catch (e) {
-      console.error(e);
+    } catch {
       showToast("Could not export the report.", "error");
     } finally {
       setExporting(null);
@@ -108,9 +122,32 @@ export const ReportsView: React.FC = () => {
   // PDF export: open the print-optimized page in a new tab; it auto-opens the
   // browser print dialog, where the user picks "Save as PDF". No PDF library
   // is needed on the server, which keeps the free serverless tier happy.
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     if (typeof window === "undefined") return;
-    window.open(exportUrl("print"), "_blank", "noopener,noreferrer");
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      showToast("Allow pop-ups to open the printable report.", "error");
+      return;
+    }
+    printWindow.opener = null;
+    printWindow.document.title = "Preparing DetaBeta report...";
+    printWindow.document.body.textContent = "Preparing printable report...";
+    setExporting("print");
+    try {
+      const token = await getBackendToken();
+      const response = await fetch(exportUrl("print"), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Print export failed");
+      const blobUrl = URL.createObjectURL(await response.blob());
+      printWindow.location.replace(blobUrl);
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch {
+      printWindow.close();
+      showToast("Could not open the printable report.", "error");
+    } finally {
+      setExporting(null);
+    }
   };
 
   if (loading) {
@@ -148,7 +185,7 @@ export const ReportsView: React.FC = () => {
               <span>HTML</span>
             </button>
             <button
-              onClick={handleExportPdf}
+              onClick={() => void handleExportPdf()}
               disabled={exporting !== null}
               className="flex items-center gap-1.5 px-3.5 py-1.5 border border-zinc-800 hover:bg-zinc-850 disabled:opacity-50 rounded text-zinc-300 text-[10px] font-semibold transition cursor-pointer"
             >
@@ -206,6 +243,19 @@ export const ReportsView: React.FC = () => {
           >
             <span>Compose Research Report</span>
           </button>
+
+          {error && (
+            <div role="alert" className="w-full rounded-lg border border-rose-900/40 bg-rose-950/10 p-3 text-left text-xs text-rose-200">
+              <p className="font-semibold">Report unavailable</p>
+              <p className="mt-1 text-rose-200/80 leading-relaxed">{error}</p>
+              <button
+                onClick={handleGenerateReport}
+                className="mt-3 text-[10px] font-semibold text-emerald-300 hover:text-emerald-200"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
         </div>
       )}
 

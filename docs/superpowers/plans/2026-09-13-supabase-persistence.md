@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Keep NextAuth and the JWT bridge; do not add Supabase Auth in this release.
-- Never commit .env, a Supabase service-role key, or a Postgres password.
+- Never commit .env, a Supabase secret key, or a Postgres password.
 - Keep the datasets bucket private; FastAPI is its only client.
 - Keep STORAGE_BACKEND=local for tests and offline development.
 - Store opaque object keys, never public URLs, in Dataset.storage_path.
@@ -49,11 +49,11 @@
 
 - [ ] **Step 3: Fill local backend-only variables**
 
-  Copy the SQLAlchemy-compatible URI from Connect into DATABASE_URL. Copy the project URL and service_role key from the dashboard into these local-only variables:
+  Copy the SQLAlchemy-compatible URI from Connect into DATABASE_URL. Copy the project URL and secret key from the dashboard into these local-only variables:
 
     STORAGE_BACKEND=supabase
     SUPABASE_URL=https://project-ref.supabase.co
-    SUPABASE_SERVICE_ROLE_KEY=server-only-value
+    SUPABASE_SECRET_KEY=server-only-value
     SUPABASE_STORAGE_BUCKET=datasets
     MAX_UPLOAD_BYTES=26214400
 
@@ -118,7 +118,7 @@
 - Modify: backend/pyproject.toml
 - Create: backend/tests/test_storage.py
 
-**Consumes:** STORAGE_BACKEND, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and SUPABASE_STORAGE_BUCKET.
+**Consumes:** STORAGE_BACKEND, SUPABASE_URL, SUPABASE_SECRET_KEY, and SUPABASE_STORAGE_BUCKET.
 
 **Produces:** the current public functions save_csv_bytes, save_dataframe, load_dataframe, and delete_file with the same tuple return type.
 
@@ -239,11 +239,11 @@
     DATABASE_URL=
     STORAGE_BACKEND=supabase
     SUPABASE_URL=
-    SUPABASE_SERVICE_ROLE_KEY=
+    SUPABASE_SECRET_KEY=
     SUPABASE_STORAGE_BUCKET=datasets
     MAX_UPLOAD_BYTES=26214400
 
-  State that only FastAPI receives the service-role key.
+  State that only FastAPI receives the secret key.
 
 - [ ] **Step 2: Install and check dependencies**
 
@@ -287,7 +287,7 @@
 
 - [ ] **Step 1: Add deployment secrets**
 
-  Add DATABASE_URL, STORAGE_BACKEND, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_STORAGE_BUCKET, MAX_UPLOAD_BYTES, BACKEND_JWT_SECRET, and the final allowed frontend origin to the backend's encrypted environment. Do not add the Supabase service-role key to frontend environment settings.
+  Add DATABASE_URL, STORAGE_BACKEND, SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_STORAGE_BUCKET, MAX_UPLOAD_BYTES, BACKEND_JWT_SECRET, and the final allowed frontend origin to the backend's encrypted environment. Do not add the Supabase secret key to frontend environment settings.
 
 - [ ] **Step 2: Run migrations explicitly before release**
 
@@ -301,5 +301,5 @@
 
 - **Spec coverage:** Tasks 1–2 establish secure Supabase and versioned schema; Tasks 3–4 implement durable private files and bounded writes; Tasks 5–6 prove local, restart, and deployed persistence.
 - **Type consistency:** the public storage function signatures are unchanged, so existing routers and engine services remain compatible.
-- **Security review:** service-role credentials are backend-only, the bucket is private, and object keys are opaque rather than user-supplied paths.
+- **Security review:** secret credentials are backend-only, the bucket is private, and object keys are opaque rather than user-supplied paths.
 

@@ -109,8 +109,26 @@ def test_safe_filename():
 # HTTP endpoint tests
 # ---------------------------------------------------------------------------
 
+import time
+import jwt
+
+_JWT_SECRET = "test-secret-that-is-at-least-32-chars-long!!"
+
+def _make_test_token(sub: str = "test-user-1") -> str:
+    now = int(time.time())
+    return jwt.encode(
+        {"sub": sub, "email": "test@detabeta.local", "name": "Test",
+         "iss": "detabeta-frontend", "aud": "detabeta-api",
+         "iat": now, "exp": now + 600},
+        _JWT_SECRET, algorithm="HS256",
+    )
+
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {_make_test_token()}"}
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("BACKEND_JWT_SECRET", _JWT_SECRET)
     db_file = tmp_path / "test.db"
     test_engine = create_engine(
         f"sqlite:///{db_file}", connect_args={"check_same_thread": False}, future=True
@@ -136,18 +154,19 @@ def client(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def dataset_id(client) -> int:
-    pid = client.post("projects", json={"name": "Titanic study"}).json()["id"]
+    pid = client.post("projects", json={"name": "Titanic study"}, headers=_auth_headers()).json()["id"]
     with open(_SAMPLE_CSV, "rb") as fh:
         resp = client.post(
             f"projects/{pid}/datasets",
             files={"file": ("passengers.csv", fh, "text/csv")},
+            headers=_auth_headers(),
         )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
 def test_export_html_downloads_attachment(client, dataset_id):
-    r = client.get(f"datasets/{dataset_id}/analysis/report/export?target=survived&format=html")
+    r = client.get(f"datasets/{dataset_id}/analysis/report/export?target=survived&format=html", headers=_auth_headers())
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("text/html")
     assert "attachment" in r.headers.get("content-disposition", "")
@@ -156,7 +175,7 @@ def test_export_html_downloads_attachment(client, dataset_id):
 
 
 def test_export_markdown_downloads_attachment(client, dataset_id):
-    r = client.get(f"datasets/{dataset_id}/analysis/report/export?target=survived&format=md")
+    r = client.get(f"datasets/{dataset_id}/analysis/report/export?target=survived&format=md", headers=_auth_headers())
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("text/markdown")
     assert ".md" in r.headers.get("content-disposition", "")
@@ -164,7 +183,7 @@ def test_export_markdown_downloads_attachment(client, dataset_id):
 
 
 def test_export_print_is_inline_and_autoprints(client, dataset_id):
-    r = client.get(f"datasets/{dataset_id}/analysis/report/export?format=print")
+    r = client.get(f"datasets/{dataset_id}/analysis/report/export?format=print", headers=_auth_headers())
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("text/html")
     # print view opens inline (no attachment), so the browser can render + print.
@@ -173,13 +192,13 @@ def test_export_print_is_inline_and_autoprints(client, dataset_id):
 
 
 def test_export_defaults_to_html(client, dataset_id):
-    r = client.get(f"datasets/{dataset_id}/analysis/report/export")
+    r = client.get(f"datasets/{dataset_id}/analysis/report/export", headers=_auth_headers())
     assert r.status_code == 200
     assert r.text.startswith("<!doctype html>")
 
 
 def test_export_rejects_unknown_format(client, dataset_id):
-    r = client.get(f"datasets/{dataset_id}/analysis/report/export?format=xml")
+    r = client.get(f"datasets/{dataset_id}/analysis/report/export?format=xml", headers=_auth_headers())
     assert r.status_code == 400
     assert "Unknown export format" in r.json()["detail"]
 
@@ -188,9 +207,9 @@ def test_export_reuses_cached_report(client, dataset_id):
     # First compose the report (miss), then export twice; the export should be
     # reading the cached session report, so a fresh session is not created each
     # time. We assert the session count stays at 1 for the base (no-target) run.
-    client.get(f"datasets/{dataset_id}/analysis/report")
-    client.get(f"datasets/{dataset_id}/analysis/report/export?format=html")
-    client.get(f"datasets/{dataset_id}/analysis/report/export?format=md")
-    sessions = client.get(f"datasets/{dataset_id}/sessions").json()
+    client.get(f"datasets/{dataset_id}/analysis/report", headers=_auth_headers())
+    client.get(f"datasets/{dataset_id}/analysis/report/export?format=html", headers=_auth_headers())
+    client.get(f"datasets/{dataset_id}/analysis/report/export?format=md", headers=_auth_headers())
+    sessions = client.get(f"datasets/{dataset_id}/sessions", headers=_auth_headers()).json()
     base_sessions = [s for s in sessions if s["target"] is None]
     assert len(base_sessions) == 1

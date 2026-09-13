@@ -35,13 +35,13 @@ Backend-only variables:
 DATABASE_URL=postgresql+psycopg://...
 STORAGE_BACKEND=supabase
 SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<server-only-secret>
+SUPABASE_SECRET_KEY=<server-only-secret>
 SUPABASE_STORAGE_BUCKET=datasets
 MAX_UPLOAD_BYTES=26214400
 ```
 
 `DATABASE_URL` is copied from the Supabase dashboard's **Connect** dialog in
-SQLAlchemy/URI form. The service-role key is copied from the project's API
+SQLAlchemy/URI form. The secret key is copied from the project's API
 keys area, not from the browser client configuration. The bucket must remain
 private. `MAX_UPLOAD_BYTES` is 25 MiB in this first release; a user exceeding
 it receives a clear HTTP 413 response.
@@ -68,7 +68,7 @@ uploaded, the backend removes that new object and rolls back the transaction.
   workflow.
 - Two uploads with the same filename have distinct storage keys and retain
   their respective content.
-- A private bucket is used; no CSV URL or service-role key reaches the browser.
+- A private bucket is used; no CSV URL or secret key reaches the browser.
 - Local tests keep using SQLite and local temporary storage without any live
   Supabase credentials.
 - Oversized uploads fail before storage/database mutation; the frontend proxy
