@@ -17,6 +17,9 @@ __pycache__/
 .idea/
 .vscode/
 
+# Local Git worktrees used for isolated feature development
+.worktrees/
+
 # DetaBeta backend runtime data (never commit uploaded files or the dev DB)
 backend/storage/
 *.db
