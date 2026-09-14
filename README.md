@@ -1,133 +1,168 @@
-# DetaBeta
+# DetaBeta — Automated Data Science Workbench
 
-DetaBeta is an interactive data-science laboratory. It guides a user from a
-dataset upload through profiling, diagnostics, statistical evidence, feature
-engineering recommendations, model experiments, explainability, and a
-research report.
+[![CI](https://github.com/Shravan144/DetaBeta/actions/workflows/ci.yml/badge.svg)](https://github.com/Shravan144/DetaBeta/actions/workflows/ci.yml)
+[![Live demo](https://img.shields.io/badge/Live%20demo-Open%20DetaBeta-00c896?style=flat-square)](https://detabeta-shravan144.vercel.app)
 
-## Stack
+**DetaBeta** is a full-stack data-science workspace for turning a CSV file into an evidence-led analysis. It guides users through data profiling, health diagnostics, pattern investigation, preparation recommendations, baseline modelling, explainability, and an exportable research report—without overwriting the original dataset.
 
-- **Frontend:** Next.js, React, TypeScript, Tailwind CSS, Recharts
-- **Backend:** FastAPI, SQLAlchemy, pandas, SciPy, scikit-learn
-- **Data:** SQLite and local files for offline work; Supabase Postgres plus a
-  private Supabase Storage bucket for durable production data
+**Live demo:** [detabeta-shravan144.vercel.app](https://detabeta-shravan144.vercel.app)
 
-## Prerequisites
+## Why DetaBeta?
 
-- Python 3.11 or later
-- Node.js 20 or later
+Exploratory analysis often lives across notebooks, spreadsheets, and disconnected tools. DetaBeta brings the early data-science workflow into one guided application:
 
-## Local setup
+1. Upload a CSV and create an experiment workspace.
+2. Inspect column profiles and data-quality diagnostics.
+3. Investigate distributions, relationships, and group differences.
+4. Review versioned, non-destructive preparation recommendations.
+5. Train and compare baseline machine-learning models.
+6. Inspect global feature importance and row-level prediction factors.
+7. Generate and export a structured research report.
 
-1. Create a fresh virtual environment at the repository root:
+## Features
 
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   python -m pip install --upgrade pip
-   python -m pip install -r backend\requirements.txt
-   ```
+- **Secure sign-in:** Google, GitHub, and optional demo credentials through NextAuth.
+- **CSV analysis workspace:** Upload CSV files up to 25 MB and retain datasets, sessions, and reports per user.
+- **Dataset explorer:** Searchable data preview and column-level metadata, summaries, cardinality, and missing-value context.
+- **Data diagnostics:** Evidence-backed checks for missing values, duplicates, outliers, and consistency concerns.
+- **Investigation hub:** Surfaced distributions, associations, and group-difference findings with confidence and caveats.
+- **Feature Lab:** Recommends cleaning and encoding steps; every applied change creates a new dataset version rather than replacing raw evidence.
+- **Experiment Studio:** Select a target, compare Logistic Regression, Decision Tree, and Random Forest baselines, and review cross-validation metrics.
+- **Explainability:** Review permutation-based global feature importance and local, row-level contribution signals.
+- **Research reports:** Compose a plain-language analytical narrative and export it as HTML, Markdown, or PDF.
 
-2. Copy `.env.example` to `.env` and adjust values if needed. For local
-   development, `STORAGE_ROOT=backend/storage` keeps uploaded datasets in the
-   project folder rather than in a temporary directory.
+## Architecture
 
-3. Install frontend dependencies:
-
-   ```powershell
-   npm.cmd --prefix frontend ci
-   ```
-
-4. Run the backend in one terminal:
-
-   ```powershell
-   .\.venv\Scripts\python.exe -m uvicorn main:app --app-dir backend --env-file .env --reload --port 8000
-   ```
-
-5. Run the frontend in a second terminal:
-
-   ```powershell
-   npm.cmd --prefix frontend run dev
-   ```
-
-   Open `http://localhost:3000`.
-
-## Supabase production persistence
-
-Supabase stores DetaBeta's project metadata, datasets, analysis sessions, and
-cached results in Postgres. The raw CSV bytes live in a **private** `datasets`
-bucket. Keep the app's existing authentication; Supabase Auth is not required
-for this integration.
-
-1. In Supabase, create a project and a private Storage bucket named `datasets`.
-2. Add these backend-only values to `.env` or to your deployment provider's
-   encrypted backend environment settings:
-
-   ```dotenv
-   DATABASE_URL=postgresql://...
-   STORAGE_BACKEND=supabase
-   SUPABASE_URL=https://your-project-ref.supabase.co
-   SUPABASE_SECRET_KEY=sb_secret_...
-   SUPABASE_STORAGE_BUCKET=datasets
-   MAX_UPLOAD_BYTES=26214400
-   ```
-
-   The database URI uses the password selected when the Supabase project was
-   created. URL-encode reserved password characters, for example `@` becomes
-   `%40`. `SUPABASE_SECRET_KEY` bypasses Supabase Storage policies, so it must
-   be supplied only to FastAPI—never to the browser, Git, or a `NEXT_PUBLIC_`
-   variable.
-3. Apply the database schema once, before starting or deploying the backend:
-
-   ```powershell
-   Push-Location backend
-   ..\.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
-   Pop-Location
-   ```
-
-4. Start the backend, create a project, upload a small CSV, run one analysis,
-   restart the backend, and refresh the browser. The project, file preview,
-   and session history should remain present.
-
-## Verification
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider backend\tests
-npm.cmd --prefix frontend run lint
-npm.cmd --prefix frontend run build
+```text
+Browser
+  │
+  ▼
+Next.js + React frontend ── NextAuth session handling
+  │
+  ▼
+FastAPI analysis API ── Pandas / SciPy / scikit-learn engines
+  │                         │
+  ▼                         ▼
+PostgreSQL persistence       Private dataset storage
 ```
 
-## Docker
+The repository also includes Docker Compose for a local PostgreSQL, FastAPI, and Next.js stack.
 
-Docker Compose starts the frontend, FastAPI backend, PostgreSQL database, and
-persistent dataset storage together:
+## Tech Stack
+
+| Area | Technologies |
+| --- | --- |
+| Frontend | Next.js, React, TypeScript, Tailwind CSS, Recharts, NextAuth |
+| Backend | Python, FastAPI, SQLAlchemy, Alembic |
+| Analysis | Pandas, NumPy, SciPy, scikit-learn |
+| Data & storage | PostgreSQL, Supabase Storage (optional in production) |
+| Quality & delivery | Pytest, Node test runner, ESLint, GitHub Actions, Docker Compose |
+
+## Run Locally
+
+### Prerequisites
+
+- Node.js 20+
+- Python 3.11+
+- PostgreSQL 16+ (or Docker)
+
+### 1. Configure environment variables
+
+Copy the template and fill in only the services you use:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+At minimum, configure `NEXTAUTH_SECRET` and `BACKEND_JWT_SECRET` for authenticated local use. OAuth and Supabase settings are optional. Never commit `.env` or provider secrets.
+
+### 2. Start the backend
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### 3. Start the frontend
+
+In a second terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+### Run with Docker
 
 ```powershell
 docker compose up --build
 ```
 
-Open `http://localhost:3000`. The frontend proxies browser requests from
-`/api/*` to the backend container, so the API is never exposed to browser code
-as an internal container hostname. Compose uses local-only default database
-credentials; set `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` in
-your `.env` file before using it outside local development.
+This starts PostgreSQL, the backend at `http://localhost:8000`, and the frontend at `http://localhost:3000`.
 
-## Continuous integration
+## Configuration
 
-GitHub Actions installs the backend and frontend from their locked dependency
-definitions, runs the backend test suite, then lints and builds the frontend.
-All of these checks are required for pull requests and pushes to `main`.
+The complete, safe-to-share configuration template is in [`.env.example`](.env.example). Key groups are:
 
-## Architecture
+- **Persistence:** `DATABASE_URL`, `STORAGE_ROOT`, and optional Supabase settings.
+- **Upload safety:** `MAX_UPLOAD_BYTES` and `ALLOWED_ORIGINS`.
+- **Authentication:** `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, and optional GitHub/Google OAuth credentials.
+- **Frontend/backend bridge:** `BACKEND_JWT_SECRET` must be a strong shared secret in production.
 
-The FastAPI API owns projects, CSV datasets, session history, cached engine
-outputs, and report exports. The nine analysis engines remain modular pure-ish
-services under `backend/engines`. The Next.js client presents the laboratory
-workflow and calls the backend through `/api` in deployment or a configured
-local API base in development.
+## Tests and Quality Checks
 
-## Current scope
+```powershell
+# Backend tests
+cd backend
+pytest -q
 
-The current upload format is CSV. Persistent cloud storage and versioned
-schema migrations are now supported; the next milestone is multi-format
-uploads.
+# Frontend unit tests
+cd frontend
+npm test
+
+# Frontend linting and production build
+npm run lint
+npm run build
+```
+
+Continuous integration runs the backend tests and frontend test, lint, and build checks on GitHub Actions.
+
+## Project Structure
+
+```text
+DetaBeta/
+├── backend/                 # FastAPI routes, analysis engines, persistence, tests
+│   ├── app/
+│   ├── alembic/             # Database migrations
+│   ├── sample_data/         # Test fixtures
+│   └── tests/
+├── frontend/                # Next.js application
+│   └── src/
+│       ├── app/             # Routes and API handlers
+│       ├── components/      # Workspace UI
+│       └── lib/             # Client utilities and tests
+├── .github/workflows/       # Continuous integration
+├── .env.example             # Safe environment-variable template
+└── compose.yaml             # Local multi-service development stack
+```
+
+## Design Principles
+
+- **Evidence before claims:** Statistical and investigation views distinguish observation from inference.
+- **Non-destructive preparation:** Recommendations create a new dataset version; raw uploads remain intact.
+- **Model humility:** Small datasets and exploratory findings are presented with limitations, not as causal proof.
+- **Production-aware defaults:** Scoped persistence, authentication, request validation, and upload-size limits are built into the application flow.
+
+## Current Scope
+
+DetaBeta is designed for tabular CSV exploration and supervised baseline modelling. It is not a replacement for domain review, rigorous experimentation, or independent validation on new data. Treat discoveries as analytical leads, especially for small datasets.
+
+## Author
+
+Built by [Shravan Bhat](https://github.com/Shravan144).
