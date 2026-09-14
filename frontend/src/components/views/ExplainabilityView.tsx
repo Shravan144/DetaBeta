@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { pickDefaultTarget } from "@/lib/target-selection";
 import { Loader2, BrainCircuit } from "lucide-react";
 import {
   BarChart,
@@ -135,10 +136,9 @@ const ConfusionMatrixPanel: React.FC<{ confusion: ConfusionMatrix | null | undef
 };
 
 export const ExplainabilityView: React.FC = () => {
-  const { selectedDatasetId, runAnalysis, openRightPanel, apiFetch } = useWorkspace();
+  const { selectedDatasetId, runAnalysis, openRightPanel, apiFetch, selectedTarget, setSelectedTarget } = useWorkspace();
   
   const [columns, setColumns] = useState<string[]>([]);
-  const [target, setTarget] = useState("");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<ExplainabilityReport | null>(null);
   
@@ -161,13 +161,10 @@ export const ExplainabilityView: React.FC = () => {
         // Pick a sensible default target: a column that looks like a label/
         // outcome, otherwise fall back to the last column. No dataset-specific
         // assumptions.
-        const TARGET_HINTS = ["target", "label", "class", "outcome", "survived", "churn", "y"];
-        const defaultTgt =
-          cols.find((c) => TARGET_HINTS.includes(c.toLowerCase())) ??
-          (cols.length > 0 ? cols[cols.length - 1] : "");
+        const defaultTgt = selectedTarget ?? pickDefaultTarget(cols);
 
         if (defaultTgt) {
-          setTarget(defaultTgt);
+          if (!selectedTarget) setSelectedTarget(defaultTgt);
           // Run explain engine
           const data = await runAnalysis("explain", defaultTgt);
           const explainability = data as unknown as ExplainabilityReport;
@@ -187,10 +184,12 @@ export const ExplainabilityView: React.FC = () => {
 
     void loadColumnsAndExplain();
     return () => { cancelled = true; };
-  }, [apiFetch, runAnalysis, selectedDatasetId]);
+  }, [apiFetch, runAnalysis, selectedDatasetId, selectedTarget, setSelectedTarget]);
+
+  const target = selectedTarget ?? "";
 
   const handleTargetChange = async (newTarget: string) => {
-    setTarget(newTarget);
+    setSelectedTarget(newTarget || null);
     if (!newTarget) {
       setReport(null);
       return;

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { Loader2, FileDown, FileText, FileCode, BookOpen } from "lucide-react";
 import { getBackendToken } from "@/lib/backend-token";
+import { pickDefaultTarget } from "@/lib/target-selection";
 
 type ReportSection = {
   key: string;
@@ -23,10 +24,9 @@ type ResearchReport = {
 };
 
 export const ReportsView: React.FC = () => {
-  const { selectedDatasetId, runAnalysis, apiBase, apiFetch, showToast } = useWorkspace();
+  const { selectedDatasetId, runAnalysis, apiBase, apiFetch, showToast, selectedTarget, setSelectedTarget } = useWorkspace();
   
   const [columns, setColumns] = useState<string[]>([]);
-  const [target, setTarget] = useState("");
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<ResearchReport | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
@@ -43,10 +43,7 @@ export const ReportsView: React.FC = () => {
         if (!cancelled) {
           const nextColumns = preview.columns ?? [];
           setColumns(nextColumns);
-          const defaultTgt = nextColumns.find((column) =>
-            column.toLowerCase() === "survived" || column.toLowerCase() === "churn"
-          );
-          if (defaultTgt) setTarget(defaultTgt);
+          if (!selectedTarget) setSelectedTarget(pickDefaultTarget(nextColumns));
         }
       } catch (requestError) {
         if (!cancelled) {
@@ -61,7 +58,9 @@ export const ReportsView: React.FC = () => {
 
     void loadColumns();
     return () => { cancelled = true; };
-  }, [apiFetch, selectedDatasetId]);
+  }, [apiFetch, selectedDatasetId, selectedTarget, setSelectedTarget]);
+
+  const target = selectedTarget ?? "";
 
   const handleGenerateReport = async () => {
     setLoading(true);
@@ -225,7 +224,7 @@ export const ReportsView: React.FC = () => {
             </label>
             <select
               value={target}
-              onChange={(e) => setTarget(e.target.value)}
+              onChange={(e) => setSelectedTarget(e.target.value || null)}
               className="bg-zinc-950 border border-zinc-850 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer w-48 font-mono"
             >
               <option value="">No Target</option>

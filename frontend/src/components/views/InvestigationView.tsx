@@ -16,7 +16,7 @@ type InvestigationReport = {
 };
 
 export const InvestigationView: React.FC = () => {
-  const { selectedDatasetId, runAnalysis, openRightPanel } = useWorkspace();
+  const { selectedDatasetId, selectedDataset, runAnalysis, openRightPanel } = useWorkspace();
   const [report, setReport] = useState<InvestigationReport | null>(null);
   const [loading, setLoading] = useState(false);
   
@@ -204,7 +204,7 @@ export const InvestigationView: React.FC = () => {
                     </div>
                     <div>
                       <span className="text-zinc-600 uppercase block text-[8px] font-sans font-bold tracking-wider">Observations</span>
-                      <span className="text-zinc-400 font-semibold">12,450 rows</span>
+                      <span className="text-zinc-400 font-semibold">{selectedDataset?.n_rows?.toLocaleString() ?? "—"} rows</span>
                     </div>
                   </div>
 

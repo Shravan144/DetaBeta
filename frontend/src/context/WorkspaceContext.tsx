@@ -75,6 +75,8 @@ interface WorkspaceContextProps {
   selectedProjectId: number | null;
   selectedDatasetId: number | null;
   selectedDataset: Dataset | null;
+  selectedTarget: string | null;
+  setSelectedTarget: (target: string | null) => void;
   activeTab: TabName;
   setActiveTab: (tab: TabName) => void;
   rightPanel: RightPanelState;
@@ -134,6 +136,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [selectedProjectId, setSelectedProjectIdState] = useState<number | null>(null);
   const [selectedDatasetId, setSelectedDatasetIdState] = useState<number | null>(null);
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
+  const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [activeTab, setActiveTabState] = useState<TabName>("dashboard");
 
   const setActiveTab = (tab: TabName) => {
@@ -309,6 +312,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const selectProject = async (projectId: number | null) => {
     setSelectedDatasetId(null);
     setSelectedDataset(null);
+    setSelectedTarget(null);
     setDatasets([]);
     resultsCacheRef.current.clear();
     setSessions([]);
@@ -342,6 +346,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const selectDataset = async (datasetId: number | null) => {
     setSelectedDatasetId(datasetId);
+    setSelectedTarget(null);
     closeRightPanel();
     // A new dataset means a fresh analysis context: drop the client-side cache
     // and any loaded session history from the previous dataset.
@@ -592,6 +597,8 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         selectedProjectId,
         selectedDatasetId,
         selectedDataset,
+        selectedTarget,
+        setSelectedTarget,
         activeTab,
         setActiveTab,
         rightPanel,

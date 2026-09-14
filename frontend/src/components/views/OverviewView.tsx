@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { MAX_UPLOAD_BYTES, validateCsvUpload } from "@/lib/upload-validation";
 import {
   Upload,
   FileSpreadsheet,
@@ -123,17 +124,25 @@ export const OverviewView: React.FC = () => {
     setDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const dropped = e.dataTransfer.files[0];
-      if (dropped.name.endsWith(".csv")) {
+      const validationError = validateCsvUpload(dropped);
+      if (!validationError) {
         setFile(dropped);
       } else {
-        alert("Please drop a valid CSV dataset file.");
+        alert(validationError);
       }
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const nextFile = e.target.files[0];
+      const validationError = validateCsvUpload(nextFile);
+      if (validationError) {
+        alert(validationError);
+        e.target.value = "";
+        return;
+      }
+      setFile(nextFile);
     }
   };
 
@@ -187,7 +196,7 @@ export const OverviewView: React.FC = () => {
               <span className="text-xs font-semibold text-zinc-300">
                 {file ? file.name : "Drop dataset here, or Browse Files"}
               </span>
-              <span className="text-[10px] text-zinc-500 block mt-1">CSV format files up to 100MB</span>
+              <span className="text-[10px] text-zinc-500 block mt-1">CSV files up to {Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB</span>
             </div>
           </label>
         </div>
