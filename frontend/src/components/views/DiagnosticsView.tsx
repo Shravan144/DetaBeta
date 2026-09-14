@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { findColumnProfile } from "@/lib/column-profile";
 import { CheckCircle, Loader2 } from "lucide-react";
 
 type HealthIssue = {
@@ -20,9 +21,13 @@ type HealthReport = {
   issues: HealthIssue[];
 };
 
+type ColumnProfile = { name: string; [key: string]: unknown };
+type DatasetProfile = { columns?: ColumnProfile[] };
+
 export const DiagnosticsView: React.FC = () => {
   const { selectedDatasetId, runAnalysis, openRightPanel } = useWorkspace();
   const [report, setReport] = useState<HealthReport | null>(null);
+  const [profile, setProfile] = useState<DatasetProfile | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -31,9 +36,14 @@ export const DiagnosticsView: React.FC = () => {
     let cancelled = false;
     async function loadHealthReport() {
       setLoading(true);
+      setReport(null);
+      setProfile(null);
       try {
-        const data = await runAnalysis("health");
-        if (!cancelled) setReport(data as HealthReport);
+        const [healthData, profileData] = await Promise.all([runAnalysis("health"), runAnalysis("understand")]);
+        if (!cancelled) {
+          setReport(healthData as HealthReport);
+          setProfile(profileData as DatasetProfile);
+        }
       } catch {
         if (!cancelled) setReport(null);
       } finally {
@@ -212,7 +222,9 @@ export const DiagnosticsView: React.FC = () => {
 
         {issuesList.length > 0 ? (
           <div className="space-y-4">
-            {issuesList.map((issue, idx) => (
+            {issuesList.map((issue, idx) => {
+              const column = issue.column ? findColumnProfile(profile?.columns ?? [], issue.column) : undefined;
+              return (
               <div
                 key={idx}
                 className="bg-[#18181b]/40 border border-zinc-800 rounded-lg overflow-hidden"
@@ -280,16 +292,16 @@ export const DiagnosticsView: React.FC = () => {
 
                   {/* Actions footer */}
                   <div className="flex justify-end pt-3 border-t border-zinc-850">
-                    <button
-                      onClick={() => openRightPanel("column", { name: issue.column, semantic_type: "unknown", raw_dtype: "unknown", reasoning: issue.reasoning, stats: issue.evidence })}
+                    {column ? <button
+                      onClick={() => openRightPanel("column", column)}
                       className="px-3.5 py-1.5 rounded border border-zinc-800 hover:bg-zinc-850 text-zinc-300 text-[10px] font-semibold transition cursor-pointer"
                     >
                       Inspect Evidence
-                    </button>
+                    </button> : <span className="text-[10px] text-zinc-600">Column profile unavailable</span>}
                   </div>
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         ) : (
           <div className="flex flex-col justify-center items-center py-16 border border-dashed border-zinc-800 rounded-lg space-y-2">

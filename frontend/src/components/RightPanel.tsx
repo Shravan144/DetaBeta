@@ -12,8 +12,6 @@ import {
   CartesianGrid,
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
-  ScatterChart,
-  Scatter,
 } from "recharts";
 
 type ColumnDetails = {
@@ -36,18 +34,15 @@ type FindingDetails = {
   title: string;
   reasoning?: string[];
   suggested_next_step?: string;
-  evidence?: {
-    pearson_r?: number;
-    spearman_rho?: number;
-    group_means?: Record<string, number>;
-    hist_bins?: number[];
-    hist_counts?: number[];
-  };
+  evidence?: Record<string, unknown>;
 };
 
 type TransformDetails = {
   columns: string[];
   title: string;
+  transform?: string;
+  evidence?: Record<string, unknown>;
+  reasoning?: string[];
   code_snippet?: string;
 };
 
@@ -63,6 +58,25 @@ type ShapDetails = {
   predicted_probability?: number;
   summary?: string;
   contributions?: ShapContribution[];
+};
+
+const EvidenceTable: React.FC<{ evidence: Record<string, unknown> }> = ({ evidence }) => {
+  const rows = Object.entries(evidence).filter(([, value]) =>
+    typeof value !== "object" || value === null
+  );
+  if (rows.length === 0) {
+    return <div className="text-[10px] text-zinc-500 text-center py-8 border border-dashed border-zinc-800 rounded">No chart-ready evidence was produced for this discovery.</div>;
+  }
+  return (
+    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-3 space-y-2 text-xs font-mono">
+      {rows.map(([key, value]) => (
+        <div key={key} className="flex justify-between gap-3 border-b border-zinc-800/60 pb-1.5 last:border-0 last:pb-0">
+          <span className="text-zinc-500">{key.replaceAll("_", " ")}</span>
+          <span className="text-zinc-200 text-right break-all">{String(value)}</span>
+        </div>
+      ))}
+    </div>
+  );
 };
 
 export const RightPanel: React.FC = () => {
@@ -202,36 +216,7 @@ export const RightPanel: React.FC = () => {
       const ev = finding.evidence || {};
       
       if (finding.finding_type === "correlation") {
-        // Render simple scatter line
-        const rVal = ev.pearson_r || ev.spearman_rho || 0.5;
-        const colA = finding.columns[0];
-        const colB = finding.columns[1];
-        const count = 50;
-        
-        // Generate mock points based on correlation value
-        const dataPoints = Array.from({ length: count }, () => {
-          const x = Math.random() * 100;
-          // y = r * x + noise
-          const noise = (Math.random() - 0.5) * 40 * (1 - Math.abs(rVal));
-          const yVal = rVal >= 0 
-            ? rVal * x + noise + (50 * (1 - rVal))
-            : Math.abs(rVal) * (100 - x) + noise + (50 * (1 - Math.abs(rVal)));
-          return { [colA]: x, [colB]: yVal };
-        });
-
-        return (
-          <div className="h-44 bg-zinc-950/60 rounded border border-zinc-900 p-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 10, right: 10, bottom: 20, left: -10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                <XAxis type="number" dataKey={colA} name={colA} stroke="#71717a" fontSize={9} />
-                <YAxis type="number" dataKey={colB} name={colB} stroke="#71717a" fontSize={9} />
-                <RechartsTooltip cursor={{ strokeDasharray: "3 3" }} />
-                <Scatter name="Observations" data={dataPoints} fill="#10b981" opacity={0.6} />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-        );
+        return <EvidenceTable evidence={ev} />;
       }
 
       if (finding.finding_type === "group_difference") {
@@ -257,33 +242,11 @@ export const RightPanel: React.FC = () => {
       }
 
       if (finding.finding_type === "distribution_skew") {
-        const bins = ev.hist_bins || [0, 10, 20, 30, 40, 50];
-        const counts = ev.hist_counts || [5, 18, 42, 22, 10];
-        
-        const chartData = counts.map((count: number, idx: number) => ({
-          bin: `${bins[idx].toFixed(0)}-${bins[idx + 1].toFixed(0)}`,
-          count,
-        }));
-
-        return (
-          <div className="h-44 bg-zinc-950/60 rounded border border-zinc-900 p-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 10, right: 10, bottom: 20, left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                <XAxis dataKey="bin" stroke="#71717a" fontSize={9} />
-                <YAxis stroke="#71717a" fontSize={9} />
-                <RechartsTooltip />
-                <Bar dataKey="count" fill="#10b981" radius={[2, 2, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        );
+        return <EvidenceTable evidence={ev} />;
       }
 
       return (
-        <div className="text-[10px] text-zinc-500 text-center py-8 border border-dashed border-zinc-800 rounded">
-          Chart preview for {finding.finding_type}
-        </div>
+        <EvidenceTable evidence={ev} />
       );
     };
 
@@ -332,22 +295,9 @@ export const RightPanel: React.FC = () => {
               03. Statistical Verification
             </h3>
             <div className="p-3 bg-zinc-900 border border-zinc-800/80 rounded space-y-2.5 text-xs">
-              <div className="flex justify-between text-mono">
-                <span className="text-zinc-500">Validation Method</span>
-                <span className="text-zinc-200 font-medium">Chi-Square Independence Test</span>
-              </div>
-              <div className="flex justify-between text-mono border-t border-zinc-800/50 pt-2">
-                <span className="text-zinc-500">Test Statistic</span>
-                <span className="text-zinc-200 font-mono font-medium">42.81</span>
-              </div>
-              <div className="flex justify-between text-mono border-t border-zinc-800/50 pt-2">
-                <span className="text-zinc-500">Significance (p-value)</span>
-                <span className="text-emerald-400 font-mono font-medium">&lt; 0.001 (Highly Real)</span>
-              </div>
-              <div className="flex justify-between text-mono border-t border-zinc-800/50 pt-2">
-                <span className="text-zinc-500">Effect Size magnitude</span>
-                <span className="text-zinc-200 font-medium">Moderate effect (d = 0.38)</span>
-              </div>
+              <p className="text-zinc-400 leading-relaxed">
+                This discovery is an exploratory lead. Use the Statistics stage to run a formal significance test; DetaBeta does not invent a p-value or effect size here.
+              </p>
             </div>
           </div>
 
@@ -391,23 +341,6 @@ export const RightPanel: React.FC = () => {
   // ----------------------------------------------------
   const renderTransformPanel = (value: unknown) => {
     const rec = value as TransformDetails;
-    
-    // Mock before vs after data (e.g. log transform of right-skewed data)
-    const beforeData = [
-      { bin: "0-10", count: 85 },
-      { bin: "10-20", count: 42 },
-      { bin: "20-30", count: 21 },
-      { bin: "30-40", count: 9 },
-      { bin: "40-50", count: 3 },
-    ];
-
-    const afterData = [
-      { bin: "0-1", count: 12 },
-      { bin: "1-2", count: 38 },
-      { bin: "2-3", count: 76 },
-      { bin: "3-4", count: 28 },
-      { bin: "4-5", count: 6 },
-    ];
 
     return (
       <div className="space-y-6">
@@ -423,43 +356,12 @@ export const RightPanel: React.FC = () => {
           </p>
         </div>
 
-        {/* Before vs After Plots */}
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <h3 className="text-xs font-medium text-zinc-400">Before (Highly Skewed)</h3>
-            <div className="h-32 bg-zinc-950/60 rounded border border-zinc-900 p-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={beforeData} margin={{ top: 5, right: 5, bottom: 5, left: -25 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                  <XAxis dataKey="bin" stroke="#71717a" fontSize={8} />
-                  <YAxis stroke="#71717a" fontSize={8} />
-                  <Bar dataKey="count" fill="#71717a" radius={[1, 1, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <h3 className="text-xs font-medium text-emerald-400">After (More Symmetric)</h3>
-            <div className="h-32 bg-zinc-950/60 rounded border border-zinc-900 p-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={afterData} margin={{ top: 5, right: 5, bottom: 5, left: -25 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                  <XAxis dataKey="bin" stroke="#71717a" fontSize={8} />
-                  <YAxis stroke="#71717a" fontSize={8} />
-                  <Bar dataKey="count" fill="#10b981" radius={[1, 1, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-
-        {/* Expected impact details */}
         <div className="p-3.5 bg-zinc-900 border border-zinc-800 rounded space-y-2 text-xs">
-          <h3 className="font-semibold text-zinc-300">Expected Effect</h3>
+          <h3 className="font-semibold text-zinc-300">What will change</h3>
           <p className="text-zinc-400 leading-relaxed">
-            Standardizing the distribution removes high influence points (leverage points) which would otherwise bias regression coefficients or distance metrics.
+            {rec.reasoning?.[0] || "This preview describes the recommended operation. Apply it only when the change matches your modelling decision."}
           </p>
+          {rec.evidence && <EvidenceTable evidence={rec.evidence} />}
         </div>
 
         {/* Copy paste Code Snippet */}
@@ -520,9 +422,9 @@ export const RightPanel: React.FC = () => {
           <div className="flex gap-2 items-center mt-2 text-xs">
             <span className="text-zinc-500">Prediction:</span>
             <span className="font-semibold text-zinc-200">{String(shap.predicted_label)}</span>
-            {shap.predicted_probability && (
+            {typeof shap.predicted_probability === "number" && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-800 font-mono">
-                {(shap.predicted_probability * 100).toFixed(0)}% Probability
+                Positive-class probability: {(shap.predicted_probability * 100).toFixed(0)}%
               </span>
             )}
           </div>

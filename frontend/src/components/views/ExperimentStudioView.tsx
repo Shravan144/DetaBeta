@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { pickDefaultTarget } from "@/lib/target-selection";
 import { Loader2, Cpu, Award, ListFilter } from "lucide-react";
 
 type AlgorithmSuggestion = {
@@ -38,10 +39,9 @@ type ExperimentReport = {
 type DatasetPreview = { columns?: string[] };
 
 export const ExperimentStudioView: React.FC = () => {
-  const { selectedDatasetId, runAnalysis, apiFetch } = useWorkspace();
+  const { selectedDatasetId, runAnalysis, apiFetch, selectedTarget, setSelectedTarget } = useWorkspace();
   
   const [columns, setColumns] = useState<string[]>([]);
-  const [target, setTarget] = useState("");
   const [loadingMetadata, setLoadingMetadata] = useState(false);
   const [loadingRecommend, setLoadingRecommend] = useState(false);
   const [loadingExperiment, setLoadingExperiment] = useState(false);
@@ -61,10 +61,7 @@ export const ExperimentStudioView: React.FC = () => {
         if (!cancelled) {
           const nextColumns = preview.columns ?? [];
           setColumns(nextColumns);
-          const defaultTgt = nextColumns.find((column) =>
-            column.toLowerCase() === "survived" || column.toLowerCase() === "churn"
-          );
-          if (defaultTgt) setTarget(defaultTgt);
+          if (!selectedTarget) setSelectedTarget(pickDefaultTarget(nextColumns));
         }
       } catch {
         if (!cancelled) setColumns([]);
@@ -75,7 +72,9 @@ export const ExperimentStudioView: React.FC = () => {
 
     void loadColumns();
     return () => { cancelled = true; };
-  }, [apiFetch, selectedDatasetId]);
+  }, [apiFetch, selectedDatasetId, selectedTarget, setSelectedTarget]);
+
+  const target = selectedTarget ?? "";
 
   // Fetch algorithm recommendations when target changes
   useEffect(() => {
@@ -99,7 +98,7 @@ export const ExperimentStudioView: React.FC = () => {
   }, [runAnalysis, selectedDatasetId, target]);
 
   const handleTargetChange = (nextTarget: string) => {
-    setTarget(nextTarget);
+    setSelectedTarget(nextTarget || null);
     setRecommendReport(null);
     setExperimentReport(null);
   };

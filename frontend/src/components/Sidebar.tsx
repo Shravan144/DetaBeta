@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useWorkspace, TabName } from "@/context/WorkspaceContext";
+import { HelpPanel, HelpPanelKind } from "@/components/HelpPanel";
 import {
   Compass,
   Database,
@@ -29,6 +30,7 @@ interface NavItemProps {
 export const Sidebar: React.FC = () => {
   const { activeTab, setActiveTab, selectedProjectId, selectedDatasetId, selectProject } = useWorkspace();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [panel, setPanel] = useState<HelpPanelKind | null>(null);
 
   const navItems: { category: string; items: NavItemProps[] }[] = [
     {
@@ -166,6 +168,7 @@ export const Sidebar: React.FC = () => {
       {/* Sidebar Footer */}
       <div className="p-3 border-t border-zinc-800 space-y-1">
         <button
+          onClick={() => setPanel("documentation")}
           className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100 rounded transition ${
             isCollapsed ? "justify-center" : ""
           }`}
@@ -174,6 +177,7 @@ export const Sidebar: React.FC = () => {
           {!isCollapsed && <span>Documentation</span>}
         </button>
         <button
+          onClick={() => setPanel("settings")}
           className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-medium text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100 rounded transition ${
             isCollapsed ? "justify-center" : ""
           }`}
@@ -182,6 +186,7 @@ export const Sidebar: React.FC = () => {
           {!isCollapsed && <span>Settings</span>}
         </button>
       </div>
+      {panel && <HelpPanel kind={panel} onClose={() => setPanel(null)} />}
     </aside>
   );
 };
